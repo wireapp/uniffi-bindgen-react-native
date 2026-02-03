@@ -19,6 +19,10 @@ pub(super) fn type_name(
     types: &TypeRenderer,
 ) -> Result<String, askama::Error> {
     let type_ = types.as_type(as_type);
+    panic!(
+        "config opt out interfaces: {}",
+        types.config.opt_out_interface
+    );
     Ok(type_
         .as_codetype()
         .type_label(types.ci, types.config.opt_out_interface))
