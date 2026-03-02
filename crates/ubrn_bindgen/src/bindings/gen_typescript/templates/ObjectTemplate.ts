@@ -15,10 +15,12 @@
 {%- let methods = obj.methods() %}
 
 {%- let is_error = ci.is_name_used_as_error(name) %}
-{%- let needs_interface = !config.opt_out_interface || obj.has_callback_interface() %}
+{%- let needs_interface = !config.strict_object_types || obj.has_callback_interface() %}
 
 {%- if needs_interface %} 
-    {%- include "ObjectInterfaceTemplate.ts" %}
+{%- include "ObjectInterfaceTemplate.ts" %}
+{%- else %}
+export type {{ protocol_name }} = {{ name }};
 {%- endif %}
 {%- if !config.strict_object_types && !obj.has_callback_interface() %}
 /**
