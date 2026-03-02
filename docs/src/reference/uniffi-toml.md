@@ -8,11 +8,11 @@ As of time of writing we support `typescript.customTypes`, `kotlin.cdylib_name` 
 ### Opting out of Interface generation
 
 By default, `ubrn` generates [Object interfaces](../idioms/objects.md#object-interfaces) for all objects. To opt out of
-this behavior, set `bindings.typescript.optOutInterface` to `true`.
+this behavior, set `bindings.typescript.strictObjectTypes` to `true`.
 
 ```toml
 [bindings.typescript]
-optOutInterface = true
+strictObjectTypes = true
 ```
 
 ### Logging the FFI
