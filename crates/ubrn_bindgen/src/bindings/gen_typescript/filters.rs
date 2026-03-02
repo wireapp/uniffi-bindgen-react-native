@@ -22,9 +22,7 @@ pub(super) fn type_name(
     types: &TypeRenderer,
 ) -> Result<String, askama::Error> {
     let type_ = types.as_type(as_type);
-    Ok(type_
-        .as_codetype()
-        .type_label(types.ci, types.config.opt_out_interface))
+    Ok(type_.as_codetype().type_label(types.ci))
 }
 
 pub(super) fn ffi_type_name_from_type(
@@ -41,9 +39,7 @@ pub(super) fn decl_type_name(
     types: &TypeRenderer,
 ) -> Result<String, askama::Error> {
     let type_ = types.as_type(as_type);
-    Ok(type_
-        .as_codetype()
-        .decl_type_label(types.ci, types.config.opt_out_interface))
+    Ok(type_.as_codetype().decl_type_label(types.ci))
 }
 
 pub(super) fn ffi_converter_name(
