@@ -19,11 +19,11 @@ impl CallbackInterfaceCodeType {
 }
 
 impl CodeType for CallbackInterfaceCodeType {
-    fn decl_type_label(&self, ci: &ComponentInterface, _opt_out_interface: bool) -> String {
+    fn decl_type_label(&self, ci: &ComponentInterface) -> String {
         format!("{}Impl", CodeOracle.class_name(ci, &self.id))
     }
 
-    fn type_label(&self, ci: &ComponentInterface, _opt_out_interface: bool) -> String {
+    fn type_label(&self, ci: &ComponentInterface) -> String {
         CodeOracle.class_name(ci, &self.id)
     }
 
