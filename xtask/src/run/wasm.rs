@@ -26,7 +26,7 @@ impl Wasm {
             .file
             .canonicalize_utf8()
             .context(format!("{} expected, but wasn't there", &cmd.js_file.file))?;
-        NodeJs.tsx(&js_file)?;
+        NodeJs.tsx(&js_file, true)?;
         Ok(())
     }
 

@@ -32,6 +32,8 @@ pub enum AbiFlavor {
     Jsi,
     #[cfg(feature = "wasm")]
     Wasm,
+    #[cfg(feature = "napi")]
+    Napi,
 }
 
 impl AbiFlavor {
@@ -40,6 +42,8 @@ impl AbiFlavor {
             Self::Jsi => "Entrypoint.cpp",
             #[cfg(feature = "wasm")]
             Self::Wasm => "src/lib.rs",
+            #[cfg(feature = "napi")]
+            Self::Napi => "src/lib.rs",
         }
     }
 }

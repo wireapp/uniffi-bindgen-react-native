@@ -83,6 +83,22 @@ impl TsFlavorParams<'_> {
         matches!(self.inner, &AbiFlavor::Jsi)
     }
 
+    pub(crate) fn is_wasm(&self) -> bool {
+        #[cfg(feature = "wasm")]
+        if matches!(self.inner, &AbiFlavor::Wasm) {
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn is_napi(&self) -> bool {
+        #[cfg(feature = "napi")]
+        if matches!(self.inner, &AbiFlavor::Napi) {
+            return true;
+        }
+        false
+    }
+
     pub(crate) fn supports_text_encoder(&self) -> bool {
         !matches!(self.inner, &AbiFlavor::Jsi)
     }

@@ -12,6 +12,8 @@ use clap::{self, Args, Subcommand};
 
 use ubrn_bindgen::{AbiFlavor, BindingsArgs, ModuleMetadata, SwitchArgs};
 
+#[cfg(feature = "napi")]
+use crate::napi;
 #[cfg(feature = "wasm")]
 use crate::wasm;
 use crate::{
@@ -54,6 +56,11 @@ pub(crate) enum GenerateCmd {
     #[cfg(feature = "wasm")]
     #[clap(aliases = ["web"])]
     Wasm(wasm::CmdArg),
+
+    /// Commands to generate Node.js N-API bindings.
+    #[cfg(feature = "napi")]
+    #[clap(aliases = ["node", "nodejs"])]
+    Napi(napi::CmdArg),
 }
 
 impl GenerateCmd {
@@ -79,6 +86,11 @@ impl GenerateCmd {
             #[cfg(feature = "wasm")]
             Self::Wasm(wasm) => {
                 wasm.run()?;
+                Ok(())
+            }
+            #[cfg(feature = "napi")]
+            Self::Napi(napi) => {
+                napi.run()?;
                 Ok(())
             }
         }
