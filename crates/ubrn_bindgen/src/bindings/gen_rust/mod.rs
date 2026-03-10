@@ -113,6 +113,8 @@ impl From<&AbiFlavor> for FlavorParams<'_> {
         match value {
             AbiFlavor::Jsi => unreachable!("Jsi should be only generating C++ not Rust"),
             AbiFlavor::Wasm => wasm_flavor(),
+            #[cfg(feature = "napi")]
+            AbiFlavor::Napi => unreachable!("Napi uses a dedicated Rust generator"),
         }
     }
 }

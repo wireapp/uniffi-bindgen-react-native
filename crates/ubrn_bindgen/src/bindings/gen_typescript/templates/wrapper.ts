@@ -17,8 +17,12 @@ import nativeModule, {
   {%- endmatch %}
   {%- endfor %}
 } from "./{{ module.ts_ffi() }}";
-{%- else %}
+{%- elif flavor.is_wasm() %}
 import * as wasmBundle from "./wasm-bindgen/index.js";
+{%- elif flavor.is_napi() %}
+import napiBundle from "./napi-bindings/index.js";
+{%- else %}
+// Unreachable if flavor handling is exhaustive.
 {%- endif %}
 
 {%- for entry in self.type_imports.borrow() %}
@@ -51,9 +55,12 @@ const {
 
 {%- if flavor.is_jsi() %}
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
-{%- else %}
+{%- elif flavor.is_wasm() %}
 const nativeModule = () => wasmBundle;
 const uniffiCaller = new UniffiRustCaller(() => new wasmBundle.RustCallStatus());
+{%- elif flavor.is_napi() %}
+const nativeModule = () => napiBundle;
+const uniffiCaller = new UniffiRustCaller(() => new napiBundle.RustCallStatus());
 {%- endif %}
 
 const uniffiIsDebug =

@@ -16,14 +16,17 @@ use super::typescript::typecheck_ts;
 pub(crate) struct NodeJs;
 
 impl NodeJs {
-    pub(crate) fn tsx(&self, file: &Utf8Path) -> Result<()> {
+    pub(crate) fn tsx(&self, file: &Utf8Path, with_wasm_modules: bool) -> Result<()> {
         typecheck_ts(file)?;
         let node_modules = YarnCmd::node_modules()?;
         let Some(tsx) = ubrn_common::find(node_modules, ".bin/tsx") else {
             unreachable!("Can't find tsx; this is likely a change in how tsx is packaged");
         };
         let mut cmd = Command::new(tsx);
-        cmd.arg("--experimental-wasm-modules").arg(file);
+        if with_wasm_modules {
+            cmd.arg("--experimental-wasm-modules");
+        }
+        cmd.arg(file);
         ubrn_common::run_cmd(&mut cmd)?;
         Ok(())
     }

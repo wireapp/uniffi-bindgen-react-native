@@ -12,6 +12,8 @@ use clap::Args;
 use ubrn_common::{mk_dir, path_or_shim, CrateMetadata, Utf8PathBufExt as _};
 use uniffi_bindgen::{cargo_metadata::CrateConfigSupplier, BindingGenerator};
 
+#[cfg(feature = "napi")]
+use super::napi::NapiBindingGenerator;
 #[cfg(feature = "wasm")]
 use super::wasm::WasmBindingGenerator;
 use super::{
@@ -26,7 +28,7 @@ pub struct BindingsArgs {
     pub(crate) source: SourceArgs,
     #[command(flatten)]
     pub(crate) output: OutputArgs,
-    #[cfg(feature = "wasm")]
+    #[cfg(any(feature = "wasm", feature = "napi"))]
     #[command(flatten)]
     switches: SwitchArgs,
 }
@@ -34,7 +36,7 @@ pub struct BindingsArgs {
 impl BindingsArgs {
     pub fn new(_switches: SwitchArgs, source: SourceArgs, output: OutputArgs) -> Self {
         Self {
-            #[cfg(feature = "wasm")]
+            #[cfg(any(feature = "wasm", feature = "napi"))]
             switches: _switches,
             source,
             output,
@@ -49,12 +51,12 @@ impl BindingsArgs {
         &self.output.cpp_dir
     }
 
-    #[cfg(not(feature = "wasm"))]
+    #[cfg(not(any(feature = "wasm", feature = "napi")))]
     pub fn switches(&self) -> SwitchArgs {
         Default::default()
     }
 
-    #[cfg(feature = "wasm")]
+    #[cfg(any(feature = "wasm", feature = "napi"))]
     pub fn switches(&self) -> SwitchArgs {
         self.switches.clone()
     }
@@ -148,6 +150,11 @@ impl BindingsArgs {
             AbiFlavor::Jsi => self.generate_bindings(
                 metadata,
                 &ReactNativeBindingGenerator::new(ts_dir, abi_dir, switches),
+            ),
+            #[cfg(feature = "napi")]
+            AbiFlavor::Napi => self.generate_bindings(
+                metadata,
+                &NapiBindingGenerator::new(ts_dir, abi_dir, switches),
             ),
             #[cfg(feature = "wasm")]
             AbiFlavor::Wasm => self.generate_bindings(

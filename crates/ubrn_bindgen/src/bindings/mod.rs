@@ -7,6 +7,8 @@
 mod entrypoint;
 pub(crate) mod extensions;
 pub(crate) mod gen_cpp;
+#[cfg(feature = "napi")]
+pub(crate) mod gen_napi;
 #[cfg(feature = "wasm")]
 pub(crate) mod gen_rust;
 pub(crate) mod gen_typescript;
