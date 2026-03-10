@@ -6,6 +6,7 @@
 pub(crate) mod cpp_bindings;
 pub(crate) mod generate_bindings;
 pub(crate) mod jsi;
+pub(crate) mod napi;
 pub(crate) mod nodejs;
 pub(crate) mod rust_crate;
 pub(crate) mod typescript;
@@ -16,6 +17,7 @@ use camino::Utf8PathBuf;
 use clap::Args;
 use generate_bindings::GenerateBindingsArg;
 use jsi::Jsi;
+use napi::Napi;
 use nodejs::NodeJs;
 use ubrn_bindgen::{AbiFlavor, SwitchArgs};
 use wasm::Wasm;
@@ -50,6 +52,7 @@ impl RunCmd {
     pub(crate) fn run(&self) -> Result<()> {
         match &self.switches.flavor {
             AbiFlavor::Jsi => Jsi.run(self),
+            AbiFlavor::Napi => Napi.run(self),
             AbiFlavor::Wasm => Wasm.run(self),
         }
     }

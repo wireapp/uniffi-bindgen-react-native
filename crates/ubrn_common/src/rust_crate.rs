@@ -7,7 +7,7 @@ use std::{path::PathBuf, process::Command};
 
 use anyhow::Result;
 use camino::{Utf8Path, Utf8PathBuf};
-use cargo_metadata::{Metadata, MetadataCommand, TargetKind};
+use cargo_metadata::{Metadata, MetadataCommand};
 
 use crate::{path_or_shim, run_cmd_quietly};
 
@@ -194,17 +194,18 @@ fn guess_library_name(metadata: &Metadata, manifest_path: &Utf8Path) -> String {
 }
 
 fn find_library_name(metadata: &Metadata, manifest_path: &Utf8Path) -> Option<String> {
-    // Get the library name
-    let lib = TargetKind::Lib;
     metadata
         .packages
         .iter()
         .find(|package| package.manifest_path == *manifest_path)
         .and_then(|package| {
-            package
-                .targets
-                .iter()
-                .find(|target| target.kind.contains(&lib))
+            package.targets.iter().find(|target| {
+                target.is_lib()
+                    || target.is_cdylib()
+                    || target.is_staticlib()
+                    || target.is_dylib()
+                    || target.is_rlib()
+            })
         })
         .map(|target| target.name.clone())
 }

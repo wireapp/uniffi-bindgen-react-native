@@ -5,6 +5,8 @@
  */
 mod bindings;
 mod cli;
+#[cfg(feature = "napi")]
+mod napi;
 mod react_native;
 mod switches;
 #[cfg(feature = "wasm")]

@@ -9,6 +9,8 @@ use ubrn_common::CrateMetadata;
 use crate::{AbiFlavor, ModuleMetadata, SwitchArgs};
 
 use super::gen_cpp;
+#[cfg(feature = "napi")]
+use super::gen_napi;
 #[cfg(feature = "wasm")]
 use super::gen_rust;
 
@@ -19,6 +21,8 @@ pub fn generate_entrypoint(
 ) -> Result<String> {
     match &switches.flavor {
         AbiFlavor::Jsi => gen_cpp::generate_entrypoint(crate_, modules),
+        #[cfg(feature = "napi")]
+        AbiFlavor::Napi => gen_napi::generate_entrypoint(crate_, modules),
         #[cfg(feature = "wasm")]
         AbiFlavor::Wasm => gen_rust::generate_entrypoint(crate_, modules),
     }
