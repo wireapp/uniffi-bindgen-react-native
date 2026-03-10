@@ -93,7 +93,6 @@ impl BindingGenerator for WasmBindingGenerator {
         _settings: &GenerationSettings,
         _components: &mut Vec<Component<Self::Config>>,
     ) -> Result<()> {
-        // NOOP
         Ok(())
     }
 

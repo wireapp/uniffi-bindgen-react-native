@@ -152,6 +152,8 @@ impl Napi {
                 native_library, addon_path
             )
         })?;
+        Self::codesign_addon_if_needed(&addon_path)
+            .with_context(|| format!("Failed to codesign staged addon at {}", addon_path))?;
 
         let loader = r#"// @ts-nocheck
 import { createRequire } from "node:module";
@@ -162,6 +164,27 @@ export default native;
         let loader_path = out_dir.join("index.js");
         ubrn_common::write_file(loader_path.clone(), loader)
             .with_context(|| format!("Failed to write NAPI ESM loader {}", loader_path))?;
+        Ok(())
+    }
+
+    fn codesign_addon_if_needed(addon_path: &Utf8Path) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            let mut cmd = Command::new("codesign");
+            cmd.args(["-s", "-", "-f", addon_path.as_str()]);
+            run_cmd_quietly(&mut cmd).with_context(|| {
+                format!(
+                    "Failed running codesign for generated NAPI addon {}",
+                    addon_path
+                )
+            })?;
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = addon_path;
+        }
+
         Ok(())
     }
 }
