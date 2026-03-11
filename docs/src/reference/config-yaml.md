@@ -218,14 +218,9 @@ napi:
 
 You can also use `node:` or `nodejs:` as aliases for this section.
 
-`features` is forwarded to both cargo builds performed by `generate napi build`:
+`features` is used when building the target crate, and is also written into the generated NAPI crate's dependency on your target crate.
 
-- building the target crate
-- building the generated NAPI crate
-
-`defaultFeatures` controls whether `--no-default-features` is passed during those builds.
-
-The same feature/default-feature settings are also written into the generated NAPI crate's dependency on your target crate.
+`defaultFeatures` controls whether `--no-default-features` is passed when building the target crate, and is also written into the generated NAPI crate's dependency on your target crate.
 
 ## `turboModule`
 

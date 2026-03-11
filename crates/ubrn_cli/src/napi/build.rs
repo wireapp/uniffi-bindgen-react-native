@@ -106,7 +106,7 @@ impl BuildArgs {
         let cargo_toml = self
             .render_cargo_toml(&generated_crate, &crate_, &napi_config)
             .context("Failed to write generated NAPI Cargo.toml")?;
-        self.compile_generated_crate(&cargo_toml, profile, &napi_config)
+        self.compile_generated_crate(&cargo_toml, profile)
             .context("Failed to compile generated NAPI crate")?;
         self.stage_node_addon(&cargo_toml, &self.ts_dir, profile)
             .context("Failed to stage compiled NAPI addon for Node.js")?;
@@ -185,16 +185,10 @@ impl BuildArgs {
         Ok(cargo_toml)
     }
 
-    fn compile_generated_crate(
-        &self,
-        cargo_toml: &Utf8Path,
-        profile: &str,
-        config: &NapiConfig,
-    ) -> Result<()> {
+    fn compile_generated_crate(&self, cargo_toml: &Utf8Path, profile: &str) -> Result<()> {
         let mut cmd = Command::new("cargo");
         cmd.arg("build")
             .args(["--manifest-path", cargo_toml.as_str()]);
-        Self::apply_feature_config(&mut cmd, config);
         if profile != "debug" {
             cmd.args(["--profile", profile]);
         }
