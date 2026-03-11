@@ -8,6 +8,8 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 use ubrn_bindgen::{OutputArgs, SourceArgs, SwitchArgs};
 
+use super::build::BuildArgs;
+
 #[derive(Args, Debug)]
 pub(crate) struct CmdArg {
     #[clap(subcommand)]
@@ -23,6 +25,9 @@ impl CmdArg {
 enum Cmd {
     /// Generate Typescript and napi-rs Rust bindings.
     Bindings(BindingsArgs),
+
+    /// Generate bindings, build the generated NAPI crate, and stage index.node.
+    Build(BuildArgs),
 }
 
 impl Cmd {
@@ -33,6 +38,7 @@ impl Cmd {
                 b.run(None)?;
                 Ok(())
             }
+            Self::Build(b) => b.run(),
         }
     }
 }

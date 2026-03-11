@@ -1,0 +1,20 @@
+[package]
+name = "uniffi-napi-bindings"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[lib]
+name = "{{crate_lib_name}}_napi"
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2", default-features = false, features = ["napi6"] }
+napi-derive = "2"
+uniffi_core = { version = "0.31", default-features = false }
+{{crate_name}} = { path = "{{crate_path}}" }
+
+[build-dependencies]
+napi-build = "2"
+
+[workspace]
