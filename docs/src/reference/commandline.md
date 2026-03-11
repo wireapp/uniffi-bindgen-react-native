@@ -492,6 +492,7 @@ Options:
       --ts-dir <TS_DIR>    Directory for the generated Typescript to put in
       --abi-dir <ABI_DIR>  Directory for the generated low-level Rust bindings and generated NAPI crate
       --toml <TOML>        Optional uniffi.toml location
+      --config <CONFIG>    Optional ubrn.config.yaml location
       --no-format          By default, bindgen will attempt to format generated code
   -r, --release            Build a release build
   -p, --profile <PROFILE>  Use a specific build profile

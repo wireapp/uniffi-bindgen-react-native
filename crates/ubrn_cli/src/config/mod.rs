@@ -44,6 +44,10 @@ pub(crate) struct ProjectConfig {
     #[serde(default, alias = "web")]
     pub(crate) wasm: crate::wasm::WasmConfig,
 
+    #[cfg(feature = "napi")]
+    #[serde(default, alias = "node", alias = "nodejs")]
+    pub(crate) napi: crate::napi::NapiConfig,
+
     #[serde(default)]
     pub(crate) bindings: BindingsConfig,
 

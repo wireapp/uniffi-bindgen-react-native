@@ -225,6 +225,8 @@ mod tests {
 
             #[cfg(feature = "wasm")]
             let wasm = crate::wasm::WasmConfig::default();
+            #[cfg(feature = "napi")]
+            let napi = crate::napi::NapiConfig::default();
 
             Self {
                 name: name.to_string(),
@@ -235,6 +237,8 @@ mod tests {
                 ios,
                 #[cfg(feature = "wasm")]
                 wasm,
+                #[cfg(feature = "napi")]
+                napi,
                 bindings,
                 tm,
                 exclude_files: Default::default(),
