@@ -290,8 +290,11 @@ This command is to generate code for:
   2. bindings: the code needed to actually bridge between Javascript and the Rust library.
 - `wasm`:
   1.
+- `napi`:
+  1. bindings: Typescript and Rust bindings for the N-API flavor.
+  2. build: builds a generated NAPI crate and stages `napi-bindings/index.node`.
 
-All subcommands require a [configuration file][config].
+Some subcommands require a [configuration file][config].
 
 If you're already using `--and-generate`, then you don't need to know how to invoke this command.
 
@@ -305,6 +308,7 @@ Usage: uniffi-bindgen-react-native generate <COMMAND>
 Commands:
   jsi   Commands to generate the JSI bindings and turbo-module code
   wasm  Commands to generate a WASM crate
+  napi  Commands to generate Node.js N-API bindings
   help  Print this message or the help of the given subcommand(s)
 
 Options:
@@ -453,6 +457,46 @@ The namespaces in the command line are derived from the crate that has had its b
 The locations of the files are derived from [the configuration file][config] and the project's package.json` file.
 
 The relationships between files are preserved–e.g. where one file points to another via a relative path, the relative path is calculated from these locations.
+```
+
+## `generate napi bindings`
+
+Generate just the Typescript and NAPI Rust bindings.
+
+```sh
+Usage: uniffi-bindgen-react-native generate napi bindings [OPTIONS] --ts-dir <TS_DIR> --cpp-dir <CPP_DIR> <SOURCE>
+
+Arguments:
+  <SOURCE>  A UDL file or library file
+
+Options:
+      --lib-file <LIB_FILE>  The path to a dynamic library to attempt to extract the definitions from and extend the component interface with
+      --crate <CRATE_NAME>   Override the default crate name that is guessed from UDL file path
+      --config <CONFIG>      The location of the uniffi.toml file
+      --library              Treat the input file as a library, extracting any Uniffi definitions from that
+      --no-format            By default, bindgen will attempt to format the code with prettier and clang-format
+      --ts-dir <TS_DIR>      The directory in which to put the generated Typescript
+      --cpp-dir <CPP_DIR>    The directory in which to put the generated C++
+  -h, --help                 Print help
+```
+
+## `generate napi build`
+
+Generate the NAPI bindings, compile the generated NAPI crate, and stage `napi-bindings/index.node`.
+
+```sh
+Usage: uniffi-bindgen-react-native generate napi build [OPTIONS] --crate <CRATE_DIR> --ts-dir <TS_DIR> --abi-dir <ABI_DIR>
+
+Options:
+      --crate <CRATE_DIR>  The crate to generate and build Node.js bindings for
+      --ts-dir <TS_DIR>    Directory for the generated Typescript to put in
+      --abi-dir <ABI_DIR>  Directory for the generated low-level Rust bindings and generated NAPI crate
+      --toml <TOML>        Optional uniffi.toml location
+      --no-format          By default, bindgen will attempt to format generated code
+  -r, --release            Build a release build
+  -p, --profile <PROFILE>  Use a specific build profile
+      --no-cargo           If the Rust library has already been built, then don't re-run cargo build
+  -h, --help               Print help
 ```
 
 # `help`
