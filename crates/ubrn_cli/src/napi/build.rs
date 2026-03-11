@@ -11,6 +11,9 @@ use clap::Args;
 use ubrn_bindgen::{AbiFlavor, BindingsArgs, OutputArgs, SourceArgs, SwitchArgs};
 use ubrn_common::{mk_dir, run_cmd_quietly, write_file, CrateMetadata};
 
+use super::NapiConfig;
+use crate::{config::ProjectConfig, workspace};
+
 #[derive(Args, Debug)]
 pub(crate) struct BuildArgs {
     /// The crate to generate and build Node.js bindings for.
@@ -28,6 +31,12 @@ pub(crate) struct BuildArgs {
     /// Optional uniffi.toml location.
     #[clap(long)]
     toml: Option<Utf8PathBuf>,
+
+    /// Optional ubrn.config.yaml location.
+    ///
+    /// If omitted, this command will auto-discover `ubrn.config.yaml` when present.
+    #[clap(long)]
+    config: Option<Utf8PathBuf>,
 
     /// By default, bindgen will attempt to format generated code.
     #[clap(long)]
@@ -50,12 +59,13 @@ pub(crate) struct BuildArgs {
 
 impl BuildArgs {
     pub(crate) fn run(&self) -> Result<()> {
+        let napi_config = self.napi_config()?;
         let profile = CrateMetadata::profile(self.profile.as_deref(), self.release);
         let crate_ = CrateMetadata::try_from(self.crate_dir.clone())
             .with_context(|| format!("Failed to read crate metadata from {}", self.crate_dir))?;
 
         if !self.no_cargo {
-            self.build_target_crate(&crate_, profile)?;
+            self.build_target_crate(&crate_, profile, &napi_config)?;
         }
 
         let library = crate_.library_path(None, profile, None);
@@ -94,9 +104,9 @@ impl BuildArgs {
             .with_context(|| format!("Failed to write NAPI entrypoint {}", entrypoint_path))?;
 
         let cargo_toml = self
-            .render_cargo_toml(&generated_crate, &crate_)
+            .render_cargo_toml(&generated_crate, &crate_, &napi_config)
             .context("Failed to write generated NAPI Cargo.toml")?;
-        self.compile_generated_crate(&cargo_toml, profile)
+        self.compile_generated_crate(&cargo_toml, profile, &napi_config)
             .context("Failed to compile generated NAPI crate")?;
         self.stage_node_addon(&cargo_toml, &self.ts_dir, profile)
             .context("Failed to stage compiled NAPI addon for Node.js")?;
@@ -107,11 +117,33 @@ impl BuildArgs {
         self.toml.clone().filter(|toml| toml.exists())
     }
 
-    fn build_target_crate(&self, crate_: &CrateMetadata, profile: &str) -> Result<()> {
+    fn napi_config(&self) -> Result<NapiConfig> {
+        let config_file = if let Some(config) = &self.config {
+            Some(config.clone())
+        } else {
+            workspace::ubrn_config_yaml().ok()
+        };
+
+        if let Some(config_file) = config_file {
+            let config = ProjectConfig::try_from(config_file.clone())
+                .with_context(|| format!("Failed to load configuration from {}", config_file))?;
+            Ok(config.napi)
+        } else {
+            Ok(Default::default())
+        }
+    }
+
+    fn build_target_crate(
+        &self,
+        crate_: &CrateMetadata,
+        profile: &str,
+        config: &NapiConfig,
+    ) -> Result<()> {
         let mut cmd = Command::new("cargo");
         cmd.arg("build")
             .args(["--manifest-path", crate_.manifest_path().as_str()])
             .current_dir(crate_.crate_dir());
+        Self::apply_feature_config(&mut cmd, config);
         if profile != "debug" {
             cmd.args(["--profile", profile]);
         }
@@ -128,17 +160,21 @@ impl BuildArgs {
         &self,
         generated_crate: &Utf8Path,
         crate_under_test: &CrateMetadata,
+        config: &NapiConfig,
     ) -> Result<Utf8PathBuf> {
         let src = include_str!("Cargo.napi.template.toml");
         let cargo_toml = generated_crate.join("Cargo.toml");
 
-        let crate_name = crate_under_test.package_name().replace('-', "_");
         let crate_path = pathdiff::diff_utf8_paths(crate_under_test.crate_dir(), generated_crate)
             .expect("Should be able to calculate a relative path");
+        let crate_dependency =
+            Self::crate_dependency_line(crate_under_test.package_name(), &crate_path, config);
         let cargo_toml_src = src
-            .replace("{{crate_name}}", crate_under_test.package_name())
-            .replace("{{crate_lib_name}}", &crate_name)
-            .replace("{{crate_path}}", crate_path.as_str());
+            .replace(
+                "{{crate_lib_name}}",
+                &crate_under_test.package_name().replace('-', "_"),
+            )
+            .replace("{{crate_dependency}}", &crate_dependency);
 
         write_file(cargo_toml.clone(), cargo_toml_src)
             .with_context(|| format!("Failed to write generated Cargo.toml {}", cargo_toml))?;
@@ -149,10 +185,16 @@ impl BuildArgs {
         Ok(cargo_toml)
     }
 
-    fn compile_generated_crate(&self, cargo_toml: &Utf8Path, profile: &str) -> Result<()> {
+    fn compile_generated_crate(
+        &self,
+        cargo_toml: &Utf8Path,
+        profile: &str,
+        config: &NapiConfig,
+    ) -> Result<()> {
         let mut cmd = Command::new("cargo");
         cmd.arg("build")
             .args(["--manifest-path", cargo_toml.as_str()]);
+        Self::apply_feature_config(&mut cmd, config);
         if profile != "debug" {
             cmd.args(["--profile", profile]);
         }
@@ -224,5 +266,38 @@ export default native;
             let _ = addon_path;
         }
         Ok(())
+    }
+
+    fn apply_feature_config(cmd: &mut Command, config: &NapiConfig) {
+        if let Some(features) = config.features.as_ref() {
+            cmd.arg("--features").arg(features.join(","));
+        }
+        if let Some(default_features) = config.default_features {
+            if default_features {
+                cmd.arg("--default-features");
+            } else {
+                cmd.arg("--no-default-features");
+            }
+        }
+    }
+
+    fn crate_dependency_line(
+        package_name: &str,
+        crate_path: &Utf8Path,
+        config: &NapiConfig,
+    ) -> String {
+        let mut entries = vec![format!("path = \"{}\"", crate_path)];
+        if let Some(features) = config.features.as_ref() {
+            let features = features
+                .iter()
+                .map(|f| format!("\"{f}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            entries.push(format!("features = [{features}]"));
+        }
+        if let Some(default_features) = config.default_features {
+            entries.push(format!("default-features = {default_features}"));
+        }
+        format!("{package_name} = {{ {} }}", entries.join(", "))
     }
 }

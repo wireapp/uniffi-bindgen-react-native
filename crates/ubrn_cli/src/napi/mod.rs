@@ -4,6 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/
  */
 mod build;
+mod config;
 mod generate;
 
+pub(crate) use config::NapiConfig;
 pub(crate) use generate::CmdArg;
