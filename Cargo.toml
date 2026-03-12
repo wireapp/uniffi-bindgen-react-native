@@ -23,3 +23,6 @@ uniffi = "=0.31.0"
 uniffi_bindgen = "=0.31.0"
 uniffi_core = { version = "=0.31.0", default-features = false }
 uniffi_meta = "=0.31.0"
+
+[patch.crates-io]
+uniffi_meta = { path = "vendor/uniffi_meta" }
