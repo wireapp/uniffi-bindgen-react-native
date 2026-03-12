@@ -134,9 +134,11 @@ const {{ trait_impl }}: { vtable: {% if flavor.is_jsi() %}{{ vtable|ffi_type_nam
             // {{ name }}: this will throw a stale handle error if the handle isn't found.
             {{ ffi_converter_name }}.drop(uniffiHandle);
         },
+        {%- if ci.uniffi_contract_version() >= 30 %}
         uniffiClone: (uniffiHandle: UniffiHandle): UniffiHandle => {
             return {{ ffi_converter_name }}.clone(uniffiHandle);
         }
+        {%- endif %}
     },
     register: () => {
         {% call ts::fn_handle(cbi.ffi_init_callback()) %}(

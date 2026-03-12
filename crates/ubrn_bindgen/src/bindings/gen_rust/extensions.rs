@@ -26,11 +26,13 @@ pub(super) impl ComponentInterface {
         let has_async_callbacks = self.has_async_callback_interface_definition();
         let has_callbacks = self.has_callbacks();
         let has_async_calls = self.has_async_calls();
+        let supports_clone_callbacks = self.uniffi_contract_version() >= 30;
         ffi_definitions2(
             self.ffi_definitions(),
             has_async_calls,
             has_callbacks,
             has_async_callbacks,
+            supports_clone_callbacks,
         )
     }
 }
@@ -40,6 +42,7 @@ fn ffi_definitions2(
     has_async_calls: bool,
     has_callbacks: bool,
     has_async_callbacks: bool,
+    supports_clone_callbacks: bool,
 ) -> impl Iterator<Item = FfiDefinition2> {
     let mut callbacks = HashMap::new();
     let mut structs = HashMap::new();
@@ -71,6 +74,9 @@ fn ffi_definitions2(
             let Some(callback) = callbacks.get(name) else {
                 panic!("Missing callback. This is a bug in ubrn");
             };
+            if callback.is_clone_callback() && !supports_clone_callbacks {
+                continue;
+            }
             let module_ident = if callback.is_free_callback() {
                 let ident = callback.module_ident_free(&ffi_struct);
                 let callback = callback.clone();
@@ -99,6 +105,7 @@ fn ffi_definitions2(
         definitions.push(FfiDefinition2::Struct(FfiStruct2 {
             ffi_struct,
             methods: method_module_idents,
+            supports_clone_callbacks,
         }));
     }
 
@@ -108,6 +115,9 @@ fn ffi_definitions2(
             continue;
         }
         if callback.is_clone_callback() {
+            if !supports_clone_callbacks {
+                continue;
+            }
             // this is done above per-vtable.
             continue;
         }
@@ -149,6 +159,7 @@ pub(super) struct FfiCallbackFunction2 {
 pub(super) struct FfiStruct2 {
     ffi_struct: FfiStruct,
     methods: HashMap<String, Ident>,
+    supports_clone_callbacks: bool,
 }
 
 #[ext]
@@ -208,15 +219,34 @@ impl FfiStruct2 {
 
     /// An iterator of method names, in the order that they are declared.
     pub(super) fn method_names(&self) -> impl Iterator<Item = &str> {
-        self.ffi_struct
-            .fields()
-            .iter()
+        self.fields()
             .filter(|f| matches!(f.type_(), FfiType::Callback(_)))
             .map(|f| f.name())
     }
 
     pub(super) fn fields(&self) -> impl Iterator<Item = &FfiField> {
-        self.ffi_struct.fields().iter()
+        let supports_clone_callbacks = self.supports_clone_callbacks;
+
+        // contract < 30 expects callback methods first and uniffi_free last.
+        let non_free = self
+            .ffi_struct
+            .fields()
+            .iter()
+            .filter(move |field| {
+                let is_clone = matches!(field.type_(), FfiType::Callback(name) if name == "CallbackInterfaceClone");
+                let is_free = matches!(field.type_(), FfiType::Callback(name) if name == "CallbackInterfaceFree");
+                (supports_clone_callbacks || !is_clone) && (supports_clone_callbacks || !is_free)
+            });
+        let free = self
+            .ffi_struct
+            .fields()
+            .iter()
+            .filter(move |field| {
+                let is_clone = matches!(field.type_(), FfiType::Callback(name) if name == "CallbackInterfaceClone");
+                let is_free = matches!(field.type_(), FfiType::Callback(name) if name == "CallbackInterfaceFree");
+                (supports_clone_callbacks || !is_clone) && !supports_clone_callbacks && is_free
+            });
+        non_free.chain(free)
     }
     pub(super) fn is_passed_from_js_to_rust(&self) -> bool {
         self.ffi_struct.is_foreign_future()

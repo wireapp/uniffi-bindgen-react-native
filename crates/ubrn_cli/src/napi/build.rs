@@ -3,7 +3,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/
  */
-use std::{fs, process::Command};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fs,
+    process::Command,
+};
 
 use anyhow::{ensure, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -93,9 +97,21 @@ impl BuildArgs {
             flavor: AbiFlavor::Napi,
         };
         let bindings = BindingsArgs::new(switches.clone(), source, output);
-        let modules = bindings
-            .run(Some(&crate_.manifest_path().to_path_buf()))
-            .context("Failed to generate NAPI bindings")?;
+        let mut restore_force_contract = false;
+        if std::env::var("UNIFFI_FORCE_CONTRACT_VERSION").is_err() {
+            if matches!(
+                self.detect_scaffolding_contract_version(&crate_),
+                Ok(version) if version < 30
+            ) {
+                std::env::set_var("UNIFFI_FORCE_CONTRACT_VERSION", "29");
+                restore_force_contract = true;
+            }
+        }
+        let modules_result = bindings.run(Some(&crate_.manifest_path().to_path_buf()));
+        if restore_force_contract {
+            std::env::remove_var("UNIFFI_FORCE_CONTRACT_VERSION");
+        }
+        let modules = modules_result.context("Failed to generate NAPI bindings")?;
 
         let entrypoint_path = generated_crate.join(switches.flavor.entrypoint());
         let entrypoint = ubrn_bindgen::generate_entrypoint(&switches, &crate_, &modules)
@@ -111,6 +127,59 @@ impl BuildArgs {
         self.stage_node_addon(&cargo_toml, &self.ts_dir, profile)
             .context("Failed to stage compiled NAPI addon for Node.js")?;
         Ok(())
+    }
+
+    fn detect_scaffolding_contract_version(&self, crate_: &CrateMetadata) -> Result<u32> {
+        let metadata = CrateMetadata::cargo_metadata(crate_.manifest_path().to_path_buf())?;
+        let root_pkg = metadata
+            .packages
+            .iter()
+            .find(|pkg| pkg.manifest_path == crate_.manifest_path())
+            .with_context(|| {
+                format!(
+                    "Failed to find root package for {} in cargo metadata",
+                    crate_.manifest_path()
+                )
+            })?;
+
+        let resolve = metadata
+            .resolve
+            .as_ref()
+            .context("Cargo metadata did not include dependency resolution graph")?;
+        let packages_by_id: HashMap<String, _> = metadata
+            .packages
+            .iter()
+            .map(|pkg| (pkg.id.to_string(), pkg))
+            .collect();
+        let nodes_by_id: HashMap<String, _> = resolve
+            .nodes
+            .iter()
+            .map(|node| (node.id.to_string(), node))
+            .collect();
+
+        let mut queue = VecDeque::from([root_pkg.id.to_string()]);
+        let mut visited = HashSet::new();
+
+        while let Some(node_id) = queue.pop_front() {
+            if !visited.insert(node_id.clone()) {
+                continue;
+            }
+
+            if let Some(pkg) = packages_by_id.get(&node_id) {
+                if (pkg.name == "uniffi" || pkg.name == "uniffi_core")
+                    && pkg.version.major == 0
+                    && pkg.version.minor < 30
+                {
+                    return Ok(29);
+                }
+            }
+
+            if let Some(node) = nodes_by_id.get(&node_id) {
+                queue.extend(node.deps.iter().map(|dep| dep.pkg.to_string()));
+            }
+        }
+
+        Ok(30)
     }
 
     fn uniffi_toml(&self) -> Option<Utf8PathBuf> {
