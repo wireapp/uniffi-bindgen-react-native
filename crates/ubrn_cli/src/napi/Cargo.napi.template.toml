@@ -9,7 +9,7 @@ name = "{{crate_lib_name}}_napi"
 crate-type = ["cdylib"]
 
 [dependencies]
-napi = { version = "2", default-features = false, features = ["napi6"] }
+napi = { version = "2", default-features = false, features = ["napi6", "async"] }
 napi-derive = "2"
 uniffi_core = { version = "0.31", default-features = false }
 {{crate_dependency}}

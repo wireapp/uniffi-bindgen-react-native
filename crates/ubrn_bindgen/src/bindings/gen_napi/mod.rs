@@ -829,14 +829,15 @@ impl ComponentTemplate {
 
                 impl #callback_fn_ident {
                     fn call(&self, args: #callback_tuple_args) {
-                        let status = self
-                            .0
-                            .call(args, napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking);
-                        assert!(
-                            matches!(status, napi::Status::Ok | napi::Status::Closing),
-                            "N-API ThreadsafeFunction call failed: {:?}",
-                            status
-                        );
+                        let callback = self.0.clone();
+                        napi::bindgen_prelude::spawn(async move {
+                            let status = callback
+                                .call_async::<()>(args)
+                                .await;
+                            if let Err(err) = status {
+                                panic!("N-API ThreadsafeFunction call failed: {err}");
+                            }
+                        });
                     }
                 }
 
