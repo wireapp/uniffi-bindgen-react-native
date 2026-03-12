@@ -245,11 +245,11 @@ fn runtime_prelude() -> TokenStream {
                 }
             }
 
-            fn read_result_status(code: Option<i8>, error_buf: Option<Buffer>) -> uniffi::RustCallStatus {
+            fn read_result_status(code: Option<i8>, error_buf: Option<&Buffer>) -> uniffi::RustCallStatus {
                 let code = code.unwrap_or(0);
                 let code = uniffi::RustCallStatusCode::try_from(code)
                     .expect("Unexpected error code. This is likely a bug in UBRN");
-                let bytes = error_buf.unwrap_or_default().to_vec();
+                let bytes = error_buf.map(|buf| buf.to_vec()).unwrap_or_default();
                 let error_buf = std::mem::ManuallyDrop::new(uniffi::RustBuffer::from_vec(bytes));
                 uniffi::RustCallStatus { error_buf, code }
             }
@@ -265,7 +265,7 @@ fn runtime_prelude() -> TokenStream {
 
                     impl $name {
                         pub fn copy_into_status(&self, rust: &mut uniffi::RustCallStatus) {
-                            *rust = read_result_status(self.code, self.error_buf.clone());
+                            *rust = read_result_status(self.code, self.error_buf.as_ref());
                         }
                     }
                 };
@@ -283,41 +283,47 @@ fn runtime_prelude() -> TokenStream {
 
                     impl $name {
                         pub fn copy_into_status(&self, rust: &mut uniffi::RustCallStatus) {
-                            *rust = read_result_status(self.code, self.error_buf.clone());
+                            *rust = read_result_status(self.code, self.error_buf.as_ref());
                         }
 
                         pub fn copy_into_return(&self, rust: &mut $rust_ty) {
                             let value = self
                                 .pointee
-                                .clone()
+                                .as_ref()
+                                .map(|value| ($convert)(value))
                                 .unwrap_or_else(|| $default_expr);
-                            *rust = ($convert)(value);
+                            *rust = value;
                         }
                     }
                 };
             }
 
             uniffi_result_void!(UniffiResultVoid);
-            uniffi_result_with_return!(UniffiResultUInt8, u8, u8, 0u8, |v: u8| v);
-            uniffi_result_with_return!(UniffiResultUInt16, u16, u16, 0u16, |v: u16| v);
-            uniffi_result_with_return!(UniffiResultUInt32, u32, u32, 0u32, |v: u32| v);
-            uniffi_result_with_return!(UniffiResultUInt64, BigInt, u64, BigInt::from(0u64), |v: BigInt| {
-                <u64 as IntoRust<UInt64>>::into_rust(v)
+            uniffi_result_with_return!(UniffiResultUInt8, u8, u8, 0u8, |v: &u8| *v);
+            uniffi_result_with_return!(UniffiResultUInt16, u16, u16, 0u16, |v: &u16| *v);
+            uniffi_result_with_return!(UniffiResultUInt32, u32, u32, 0u32, |v: &u32| *v);
+            uniffi_result_with_return!(UniffiResultUInt64, BigInt, u64, 0u64, |v: &BigInt| {
+                let (is_negative, value, _lossless) = v.get_u64();
+                if is_negative {
+                    panic!("Expected non-negative bigint value");
+                }
+                value
             });
-            uniffi_result_with_return!(UniffiResultInt8, i8, i8, 0i8, |v: i8| v);
-            uniffi_result_with_return!(UniffiResultInt16, i16, i16, 0i16, |v: i16| v);
-            uniffi_result_with_return!(UniffiResultInt32, i32, i32, 0i32, |v: i32| v);
-            uniffi_result_with_return!(UniffiResultInt64, BigInt, i64, BigInt::from(0i64), |v: BigInt| {
-                <i64 as IntoRust<Int64>>::into_rust(v)
+            uniffi_result_with_return!(UniffiResultInt8, i8, i8, 0i8, |v: &i8| *v);
+            uniffi_result_with_return!(UniffiResultInt16, i16, i16, 0i16, |v: &i16| *v);
+            uniffi_result_with_return!(UniffiResultInt32, i32, i32, 0i32, |v: &i32| *v);
+            uniffi_result_with_return!(UniffiResultInt64, BigInt, i64, 0i64, |v: &BigInt| {
+                let (value, _lossless) = v.get_i64();
+                value
             });
-            uniffi_result_with_return!(UniffiResultFloat32, f64, f32, 0.0f64, |v: f64| v as f32);
-            uniffi_result_with_return!(UniffiResultFloat64, f64, f64, 0.0f64, |v: f64| v);
+            uniffi_result_with_return!(UniffiResultFloat32, f64, f32, 0.0f32, |v: &f64| *v as f32);
+            uniffi_result_with_return!(UniffiResultFloat64, f64, f64, 0.0f64, |v: &f64| *v);
             uniffi_result_with_return!(
                 UniffiResultForeignBytes,
                 Buffer,
                 uniffi::RustBuffer,
-                Buffer::from(Vec::<u8>::new()),
-                |v: Buffer| {
+                uniffi::RustBuffer::from_vec(Vec::<u8>::new()),
+                |v: &Buffer| {
                     uniffi::RustBuffer::from_vec(v.to_vec())
                 }
             );
@@ -327,8 +333,7 @@ fn runtime_prelude() -> TokenStream {
             }
 
             fn env_to_raw(env: Env) -> napi::sys::napi_env {
-                // SAFETY: Env is a tuple struct around napi_env in napi-rs v2.
-                unsafe { std::mem::transmute::<Env, napi::sys::napi_env>(env) }
+                env.raw()
             }
 
             pub fn set_current_env(env: Env) {
@@ -343,8 +348,7 @@ fn runtime_prelude() -> TokenStream {
                         !raw.is_null(),
                         "N-API Env accessed before it was initialized. This is a bug in UBRN"
                     );
-                    // SAFETY: `raw` comes from napi-rs `Env` values for this module instance.
-                    unsafe { Env::from_raw(raw) }
+                    Env::from_raw(raw)
                 })
             }
 
@@ -352,8 +356,7 @@ fn runtime_prelude() -> TokenStream {
             #[derive(Default)]
             pub struct RustCallStatus {
                 pub code: i8,
-                #[napi(js_name = "errorBuf")]
-                pub error_buf: Option<ForeignBytes>,
+                error_buf: Option<Vec<u8>>,
             }
 
             #[napi]
@@ -363,17 +366,27 @@ fn runtime_prelude() -> TokenStream {
                     Default::default()
                 }
 
-                pub fn from_object(object: napi::bindgen_prelude::Object) -> Self {
+                #[napi(getter, js_name = "errorBuf")]
+                pub fn get_error_buf(&self) -> Option<Buffer> {
+                    self.error_buf.as_ref().map(|bytes| Buffer::from(bytes.clone()))
+                }
+
+                #[napi(setter, js_name = "errorBuf")]
+                pub fn set_error_buf(&mut self, error_buf: Option<Buffer>) {
+                    self.error_buf = error_buf.map(|buf| buf.to_vec());
+                }
+
+                pub fn from_object(object: napi::bindgen_prelude::Object<'_>) -> Self {
                     let code = object
                         .get("code")
                         .expect("Failed reading RustCallStatus.code from N-API object")
                         .unwrap_or_default();
-                    let error_buf = match object.get::<_, Option<Buffer>>("errorBuf") {
-                        Ok(value) => value.flatten(),
+                    let error_buf = match object.get::<Buffer>("errorBuf") {
+                        Ok(value) => value.map(|buf| buf.to_vec()),
                         Err(_) => match object
-                            .get::<_, Option<napi::bindgen_prelude::Uint8Array>>("errorBuf")
+                            .get::<napi::bindgen_prelude::Uint8Array>("errorBuf")
                         {
-                            Ok(value) => value.flatten().map(|bytes| Buffer::from(bytes.to_vec())),
+                            Ok(value) => value.map(|bytes| bytes.to_vec()),
                             Err(_) => None,
                         },
                     };
@@ -385,7 +398,7 @@ fn runtime_prelude() -> TokenStream {
                 pub fn copy_from(&mut self, rust: uniffi::RustCallStatus) {
                     self.code = rust.code as i8;
                     let buf = std::mem::ManuallyDrop::into_inner(rust.error_buf).destroy_into_vec();
-                    self.error_buf = Some(Buffer::from(buf));
+                    self.error_buf = Some(buf);
                 }
             }
 
@@ -393,7 +406,7 @@ fn runtime_prelude() -> TokenStream {
                 fn into_rust(js: RustCallStatus) -> Self {
                     let code = uniffi::RustCallStatusCode::try_from(js.code)
                         .expect("Unexpected error code. This is likely a bug in UBRN");
-                    let bytes = js.error_buf.unwrap_or_default().to_vec();
+                    let bytes = js.error_buf.unwrap_or_default();
                     let error_buf = std::mem::ManuallyDrop::new(uniffi::RustBuffer::from_vec(bytes));
                     uniffi::RustCallStatus { error_buf, code }
                 }
@@ -768,7 +781,10 @@ impl ComponentTemplate {
                 use super::*;
 
                 pub(super) struct #callback_fn_ident(
-                    napi::bindgen_prelude::FunctionRef<#callback_tuple_args, #js_return_type>
+                    napi::bindgen_prelude::FunctionRef<
+                        napi::bindgen_prelude::FnArgs<#callback_tuple_args>,
+                        #js_return_type
+                    >
                 );
 
                 impl #callback_fn_ident {
@@ -778,7 +794,7 @@ impl ComponentTemplate {
                             .borrow_back(&env_)
                             .expect("Failed to borrow N-API callback reference");
                         callback_
-                            .call(args)
+                            .call(napi::bindgen_prelude::FnArgs::from(args))
                             .expect("N-API callback call failed")
                     }
                 }
@@ -789,7 +805,10 @@ impl ComponentTemplate {
                         value: napi::sys::napi_value
                     ) -> napi::bindgen_prelude::Result<Self> {
                         let callback =
-                            <napi::bindgen_prelude::FunctionRef<#callback_tuple_args, #js_return_type> as napi::bindgen_prelude::FromNapiValue>::from_napi_value(env, value)?;
+                            <napi::bindgen_prelude::FunctionRef<
+                                napi::bindgen_prelude::FnArgs<#callback_tuple_args>,
+                                #js_return_type
+                            > as napi::bindgen_prelude::FromNapiValue>::from_napi_value(env, value)?;
                         Ok(Self(callback))
                     }
                 }
@@ -821,23 +840,25 @@ impl ComponentTemplate {
                 use super::*;
 
                 pub(super) struct #callback_fn_ident(
-                    napi::threadsafe_function::ThreadsafeFunction<
-                        #callback_tuple_args,
-                        napi::threadsafe_function::ErrorStrategy::Fatal
-                    >
+                    std::sync::Arc<napi::threadsafe_function::ThreadsafeFunction<
+                        napi::bindgen_prelude::FnArgs<#callback_tuple_args>,
+                        (),
+                        napi::bindgen_prelude::FnArgs<#callback_tuple_args>,
+                        napi::Status,
+                        false,
+                        true
+                    >>
                 );
 
                 impl #callback_fn_ident {
                     fn call(&self, args: #callback_tuple_args) {
-                        let callback = self.0.clone();
-                        napi::bindgen_prelude::spawn(async move {
-                            let status = callback
-                                .call_async::<()>(args)
-                                .await;
-                            if let Err(err) = status {
-                                panic!("N-API ThreadsafeFunction call failed: {err}");
-                            }
-                        });
+                        let status = self.0.call(
+                            napi::bindgen_prelude::FnArgs::from(args),
+                            napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking
+                        );
+                        if status != napi::Status::Ok {
+                            panic!("N-API ThreadsafeFunction call failed with status: {status:?}");
+                        }
                     }
                 }
 
@@ -847,22 +868,21 @@ impl ComponentTemplate {
                         value: napi::sys::napi_value
                     ) -> napi::bindgen_prelude::Result<Self> {
                         let callback = <napi::threadsafe_function::ThreadsafeFunction<
-                            #callback_tuple_args,
-                            napi::threadsafe_function::ErrorStrategy::Fatal
+                            napi::bindgen_prelude::FnArgs<#callback_tuple_args>,
+                            (),
+                            napi::bindgen_prelude::FnArgs<#callback_tuple_args>,
+                            napi::Status,
+                            false,
+                            true
                         > as napi::bindgen_prelude::FromNapiValue>::from_napi_value(env, value)?;
-                        Ok(Self(callback))
+                        Ok(Self(std::sync::Arc::new(callback)))
                     }
                 }
 
                 static CALLBACK: js::SharedCell<#callback_fn_ident> = js::SharedCell::new();
 
                 impl IntoRust<#callback_fn_ident> for FnSig {
-                    fn into_rust(mut callback: #callback_fn_ident) -> Self {
-                        let env_ = js::current_env();
-                        callback
-                            .0
-                            .unref(&env_)
-                            .expect("Failed to unref N-API ThreadsafeFunction");
+                    fn into_rust(callback: #callback_fn_ident) -> Self {
                         CALLBACK.set(callback);
                         implementation
                     }
@@ -929,7 +949,7 @@ impl ComponentTemplate {
                     let alias_ident = st.method_alias_ident(field_name);
                     Ok(quote! {
                         fn #field_ident(&self) -> #alias_ident::#callback_fn_ident {
-                            self.0
+                            self.object()
                                 .get(#js_field_name)
                                 .expect("Failed reading callback field from N-API object")
                                 .expect("Missing callback field from N-API object")
@@ -937,8 +957,8 @@ impl ComponentTemplate {
                     })
                 } else if matches!(field.type_(), FfiType::RustCallStatus) {
                     Ok(quote! {
-                        fn #field_ident(&self) -> napi::bindgen_prelude::Object {
-                            self.0
+                        fn #field_ident(&self) -> napi::bindgen_prelude::Object<'_> {
+                            self.object()
                                 .get(#js_field_name)
                                 .expect("Failed reading struct field from N-API object")
                                 .expect("Missing struct field from N-API object")
@@ -949,7 +969,7 @@ impl ComponentTemplate {
                     let type_ = self.ffi_type_foreign_future(&field_type)?;
                     Ok(quote! {
                         fn #field_ident(&self) -> #type_ {
-                            self.0
+                            self.object()
                                 .get(#js_field_name)
                                 .expect("Failed reading struct field from N-API object")
                                 .expect("Missing struct field from N-API object")
@@ -1023,20 +1043,25 @@ impl ComponentTemplate {
                 use super::*;
                 #use_statements
 
-                pub(super) struct VTableJs(napi::bindgen_prelude::Object);
+                pub(super) struct VTableJs {
+                    env: napi::sys::napi_env,
+                    value: napi::sys::napi_value,
+                }
 
                 impl napi::bindgen_prelude::FromNapiValue for VTableJs {
                     unsafe fn from_napi_value(
                         env: napi::sys::napi_env,
                         value: napi::sys::napi_value
                     ) -> napi::bindgen_prelude::Result<Self> {
-                        let object =
-                            <napi::bindgen_prelude::Object as napi::bindgen_prelude::FromNapiValue>::from_napi_value(env, value)?;
-                        Ok(Self(object))
+                        Ok(Self { env, value })
                     }
                 }
 
                 impl VTableJs {
+                    fn object(&self) -> napi::bindgen_prelude::Object<'_> {
+                        napi::bindgen_prelude::Object::from_raw(self.env, self.value)
+                    }
+
                     #vtable_js_getters
                 }
 

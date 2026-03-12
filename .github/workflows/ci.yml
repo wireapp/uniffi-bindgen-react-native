@@ -10,6 +10,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  node-compat:
+    name: "🟢 Node Compat (${{ matrix.node-version }})"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ["22.x", "24.x"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install yarn
+        run: cargo xtask bootstrap yarn
+      - name: Build Typescript package
+        run: yarn build
+
   lint:
     name: 🔍 Lint
     runs-on: ubuntu-latest
