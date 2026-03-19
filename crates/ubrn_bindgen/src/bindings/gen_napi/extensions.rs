@@ -14,12 +14,22 @@ use uniffi_bindgen::{
 };
 
 use super::util::{ident, snake_case_ident};
-use crate::bindings::extensions::{
-    ComponentInterfaceExt as _, FfiCallbackFunctionExt as _, FfiStructExt as _,
-};
+use crate::bindings::extensions::{FfiCallbackFunctionExt as _, FfiStructExt as _};
 
 #[ext]
 pub(super) impl ComponentInterface {
+    fn has_callbacks(&self) -> bool {
+        !self.callback_interface_definitions().is_empty()
+            || self
+                .object_definitions()
+                .iter()
+                .any(|object| object.has_callback_interface())
+    }
+
+    fn has_async_calls(&self) -> bool {
+        self.iter_callables().any(|callable| callable.is_async())
+    }
+
     fn ffi_definitions2(&self) -> impl Iterator<Item = FfiDefinition2> {
         let has_async_callbacks = self.has_async_callback_interface_definition();
         let has_callbacks = self.has_callbacks();
@@ -30,6 +40,31 @@ pub(super) impl ComponentInterface {
             has_callbacks,
             has_async_callbacks,
         )
+    }
+}
+
+enum CallbackRole {
+    Free,
+    Clone,
+    UserMethod,
+    FutureInfra,
+    Continuation,
+    FunctionLiteral,
+}
+
+fn classify_callback(callback: &FfiCallbackFunction) -> CallbackRole {
+    if callback.is_free_callback() {
+        CallbackRole::Free
+    } else if callback.is_clone_callback() {
+        CallbackRole::Clone
+    } else if callback.is_user_callback() {
+        CallbackRole::UserMethod
+    } else if callback.is_function_literal() {
+        CallbackRole::FunctionLiteral
+    } else if callback.is_continuation_callback() {
+        CallbackRole::Continuation
+    } else {
+        CallbackRole::FutureInfra
     }
 }
 
@@ -71,28 +106,30 @@ fn ffi_definitions2(
             let Some(callback) = callbacks.get(name) else {
                 panic!("Missing callback. This is a bug in ubrn");
             };
-            let module_ident = if callback.is_free_callback() {
-                let ident = callback.module_ident_free(&ffi_struct);
-                let callback = callback.clone();
-                let module_ident = ident.clone();
-                let cb = FfiCallbackFunction2 {
-                    callback,
-                    module_ident,
-                };
-                definitions.push(FfiDefinition2::CallbackFunction(cb));
-                ident
-            } else if callback.is_clone_callback() {
-                let ident = callback.module_ident_clone(&ffi_struct);
-                let callback = callback.clone();
-                let module_ident = ident.clone();
-                let cb = FfiCallbackFunction2 {
-                    callback,
-                    module_ident,
-                };
-                definitions.push(FfiDefinition2::CallbackFunction(cb));
-                ident
-            } else {
-                callback.module_ident()
+            let module_ident = match classify_callback(callback) {
+                CallbackRole::Free => {
+                    let ident = callback.module_ident_free(&ffi_struct);
+                    let callback = callback.clone();
+                    let module_ident = ident.clone();
+                    let cb = FfiCallbackFunction2 {
+                        callback,
+                        module_ident,
+                    };
+                    definitions.push(FfiDefinition2::CallbackFunction(cb));
+                    ident
+                }
+                CallbackRole::Clone => {
+                    let ident = callback.module_ident_clone(&ffi_struct);
+                    let callback = callback.clone();
+                    let module_ident = ident.clone();
+                    let cb = FfiCallbackFunction2 {
+                        callback,
+                        module_ident,
+                    };
+                    definitions.push(FfiDefinition2::CallbackFunction(cb));
+                    ident
+                }
+                _ => callback.module_ident(),
             };
             method_module_idents.insert(field.name().to_string(), module_ident);
         }
@@ -104,20 +141,30 @@ fn ffi_definitions2(
     }
 
     for callback in callbacks.into_values() {
-        if callback.is_free_callback() {
-            continue;
-        }
-        if callback.is_clone_callback() {
-            continue;
-        }
-        if !has_async_callbacks && callback.is_future_callback() {
-            continue;
-        }
-        if !has_async_calls && callback.is_continuation_callback() {
-            continue;
-        }
-        if !has_callbacks && callback.is_user_callback() {
-            continue;
+        match classify_callback(&callback) {
+            CallbackRole::Free | CallbackRole::Clone => {
+                continue;
+            }
+            CallbackRole::FutureInfra => {
+                if !has_async_callbacks {
+                    continue;
+                }
+            }
+            CallbackRole::Continuation => {
+                if !has_async_calls {
+                    continue;
+                }
+            }
+            CallbackRole::UserMethod => {
+                if !has_callbacks {
+                    continue;
+                }
+            }
+            CallbackRole::FunctionLiteral => {
+                if !has_async_callbacks {
+                    continue;
+                }
+            }
         }
 
         let cb = FfiCallbackFunction2 {
@@ -170,6 +217,14 @@ pub(super) impl FfiCallbackFunction {
 
     fn module_ident(&self) -> Ident {
         snake_case_ident(self.name())
+    }
+
+    fn is_clone_callback(&self) -> bool {
+        self.name() == "CallbackInterfaceClone"
+    }
+
+    fn is_future_callback(&self) -> bool {
+        self.name().starts_with("ForeignFuture") && self.name() != "ForeignFutureDroppedCallback"
     }
 }
 

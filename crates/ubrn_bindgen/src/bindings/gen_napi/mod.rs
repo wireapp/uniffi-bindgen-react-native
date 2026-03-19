@@ -48,12 +48,12 @@ pub(crate) fn generate_rs(
     let mut template = ComponentTemplate;
 
     let externs: TokenStream = ci
-        .iter_ffi_functions_js_to_abi_rust()
+        .iter_ffi_functions_js_to_rust()
         .map(|func| template.ffi_function_decl_c_abi(&func))
         .collect::<Result<_>>()?;
 
     let wrappers: TokenStream = ci
-        .iter_ffi_functions_js_to_abi_rust()
+        .iter_ffi_functions_js_to_rust()
         .map(|func| template.ffi_function(&func))
         .collect::<Result<_>>()?;
 
@@ -169,19 +169,19 @@ fn runtime_prelude() -> TokenStream {
             identity_into_rust!(Int8, i8);
             identity_into_rust!(Int16, i16);
             identity_into_rust!(Int32, i32);
-            identity_into_rust!(Float32, f32);
             identity_into_rust!(Float64, f64);
 
-            // N-API numbers are represented as f64, but some generated foreign-future
-            // structs contain Float32 payload fields.
-            impl IntoRust<Float64> for f32 {
-                fn into_rust(v: Float64) -> Self {
+            // N-API numbers are represented as f64, including generated Float32 values.
+            pub type Float32 = Float64;
+
+            impl IntoRust<Float32> for f32 {
+                fn into_rust(v: Float32) -> Self {
                     v as f32
                 }
             }
 
-            impl IntoJs<Float64> for f32 {
-                fn into_js(self) -> Float64 {
+            impl IntoJs<Float32> for f32 {
+                fn into_js(self) -> Float32 {
                     self as f64
                 }
             }
@@ -345,6 +345,18 @@ fn runtime_prelude() -> TokenStream {
                     );
                     // SAFETY: `raw` comes from napi-rs `Env` values for this module instance.
                     unsafe { Env::from_raw(raw) }
+                })
+            }
+
+            pub fn try_current_env() -> Option<Env> {
+                CURRENT_ENV.with(|cell| {
+                    let raw = cell.get();
+                    if raw.is_null() {
+                        None
+                    } else {
+                        // SAFETY: `raw` comes from napi-rs `Env` values for this module instance.
+                        Some(unsafe { Env::from_raw(raw) })
+                    }
                 })
             }
 
@@ -767,11 +779,11 @@ impl ComponentTemplate {
             quote! {
                 use super::*;
 
-                pub(super) struct #callback_fn_ident(
+                pub(super) struct LocalJsCallbackFn(
                     napi::bindgen_prelude::FunctionRef<#callback_tuple_args, #js_return_type>
                 );
 
-                impl #callback_fn_ident {
+                impl LocalJsCallbackFn {
                     fn call(&self, args: #callback_tuple_args) -> #js_return_type {
                         let env_ = js::current_env();
                         let callback_ = self.0
@@ -783,24 +795,77 @@ impl ComponentTemplate {
                     }
                 }
 
+                pub(super) struct SharedJsCallbackFn(
+                    napi::threadsafe_function::ThreadsafeFunction<
+                        #callback_tuple_args,
+                        napi::threadsafe_function::ErrorStrategy::Fatal
+                    >
+                );
+
+                impl SharedJsCallbackFn {
+                    fn call(&self, args: #callback_tuple_args) -> #js_return_type {
+                        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+                        let status = self.0.call_with_return_value(
+                            args,
+                            napi::threadsafe_function::ThreadsafeFunctionCallMode::Blocking,
+                            move |result: #js_return_type| {
+                                sender
+                                    .send(result)
+                                    .map_err(|_| napi::Error::from_reason("Failed to send N-API callback return value"))?;
+                                Ok(())
+                            },
+                        );
+                        assert!(
+                            matches!(status, napi::Status::Ok),
+                            "N-API ThreadsafeFunction call failed: {:?}",
+                            status
+                        );
+                        receiver
+                            .recv()
+                            .expect("Failed to receive N-API callback return value")
+                    }
+                }
+
+                pub(super) struct #callback_fn_ident {
+                    local: LocalJsCallbackFn,
+                    shared: SharedJsCallbackFn,
+                }
+
                 impl napi::bindgen_prelude::FromNapiValue for #callback_fn_ident {
                     unsafe fn from_napi_value(
                         env: napi::sys::napi_env,
                         value: napi::sys::napi_value
                     ) -> napi::bindgen_prelude::Result<Self> {
-                        let callback =
+                        let local =
                             <napi::bindgen_prelude::FunctionRef<#callback_tuple_args, #js_return_type> as napi::bindgen_prelude::FromNapiValue>::from_napi_value(env, value)?;
-                        Ok(Self(callback))
+                        let shared =
+                            <napi::threadsafe_function::ThreadsafeFunction<
+                                #callback_tuple_args,
+                                napi::threadsafe_function::ErrorStrategy::Fatal
+                            > as napi::bindgen_prelude::FromNapiValue>::from_napi_value(env, value)?;
+                        Ok(Self {
+                            local: LocalJsCallbackFn(local),
+                            shared: SharedJsCallbackFn(shared),
+                        })
                     }
                 }
 
                 thread_local! {
-                    static CALLBACK: js::ForeignCell<#callback_fn_ident> = js::ForeignCell::new();
+                    static LOCAL_CALLBACK: js::ForeignCell<LocalJsCallbackFn> = js::ForeignCell::new();
                 }
 
+                static SHARED_CALLBACK: js::SharedCell<SharedJsCallbackFn> = js::SharedCell::new();
+
                 impl IntoRust<#callback_fn_ident> for FnSig {
-                    fn into_rust(callback: #callback_fn_ident) -> Self {
-                        CALLBACK.with(|cell| cell.set(callback));
+                    fn into_rust(mut callback: #callback_fn_ident) -> Self {
+                        let env_ = js::current_env();
+                        callback
+                            .shared
+                            .0
+                            .unref(&env_)
+                            .expect("Failed to unref N-API ThreadsafeFunction");
+                        LOCAL_CALLBACK.with(|cell| cell.set(callback.local));
+                        SHARED_CALLBACK.set(callback.shared);
                         implementation
                     }
                 }
@@ -808,9 +873,15 @@ impl ComponentTemplate {
                 pub(super) type FnSig = extern "C" fn(#rust_args_decl #return_arg_decl #call_status_arg_decl) #fn_return_suffix;
 
                 extern "C" fn implementation(#rust_args_decl #return_arg_decl #call_status_arg_decl) #fn_return_suffix {
-                    #return_let CALLBACK.with(|#cell| #cell.with_value(|#callback| {
-                        #callback.call(#callback_call_args)
-                    }));
+                    #return_let if js::try_current_env().is_some() {
+                        LOCAL_CALLBACK.with(|#cell| #cell.with_value(|#callback| {
+                            #callback.call(#callback_call_args)
+                        }))
+                    } else {
+                        SHARED_CALLBACK.with_value(|#callback| {
+                            #callback.call(#callback_call_args)
+                        })
+                    };
                     #call_status_copy
                     #return_copy
                     #direct_return_expr
@@ -1082,6 +1153,7 @@ impl ComponentTemplate {
                 quote! { <u64 as IntoRust<js::UInt64>>::into_rust(#ident), }
             }
             FfiType::Int64 => quote! { <i64 as IntoRust<js::Int64>>::into_rust(#ident), },
+            FfiType::Float32 => quote! { <f32 as IntoRust<js::Float32>>::into_rust(#ident), },
             FfiType::RustBuffer(_) | FfiType::ForeignBytes => {
                 quote! { <js::uniffi::RustBuffer as IntoRust<js::ForeignBytes>>::into_rust(#ident), }
             }
@@ -1104,6 +1176,7 @@ impl ComponentTemplate {
                 quote! { <u64 as IntoJs<js::UInt64>>::into_js(#value) }
             }
             FfiType::Int64 => quote! { <i64 as IntoJs<js::Int64>>::into_js(#value) },
+            FfiType::Float32 => quote! { <f32 as IntoJs<js::Float32>>::into_js(#value) },
             FfiType::RustBuffer(_) | FfiType::ForeignBytes => {
                 quote! { <js::uniffi::RustBuffer as IntoJs<js::ForeignBytes>>::into_js(#value) }
             }
