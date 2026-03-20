@@ -73,6 +73,7 @@ impl Target {
         format!("{}.node", self.loader_key())
     }
 
+    #[cfg(target_os = "macos")]
     pub(crate) fn is_darwin(&self) -> bool {
         matches!(self, Self::Aarch64AppleDarwin)
     }
