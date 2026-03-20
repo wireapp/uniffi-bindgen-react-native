@@ -26,7 +26,7 @@ enum Cmd {
     /// Generate Typescript and napi-rs Rust bindings.
     Bindings(BindingsArgs),
 
-    /// Generate bindings, build the generated NAPI crate, and stage index.node.
+    /// Generate bindings, build the generated NAPI crate, and stage a runtime loader plus target-specific addons.
     Build(BuildArgs),
 }
 

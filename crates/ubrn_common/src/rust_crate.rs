@@ -134,6 +134,8 @@ fn so_extension_from_target<'a>(target: &str, use_shared_library: Option<bool>) 
         "dll"
     } else if target.contains("darwin") {
         "dylib"
+    } else if target.contains("linux") {
+        "so"
     } else if target.contains("ios") {
         "a"
     } else if target.contains("android")
@@ -145,7 +147,9 @@ fn so_extension_from_target<'a>(target: &str, use_shared_library: Option<bool>) 
     } else if target.contains("wasm") {
         "wasm"
     } else {
-        unimplemented!("Building targeting only on android and ios supported right now")
+        unimplemented!(
+            "Building targeting only on android, ios, macos, linux and wasm is supported right now"
+        )
     }
 }
 

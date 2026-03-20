@@ -206,7 +206,7 @@ Any `uniffi::export` or `uniffi` derive macros should not be toggled on and off 
 
 ## `napi`
 
-This section configures feature flags used by `generate napi build`.
+This section configures feature flags and output targets used by `generate napi build`.
 
 If absent, defaults are:
 
@@ -221,6 +221,22 @@ You can also use `node:` or `nodejs:` as aliases for this section.
 `features` is used when building the target crate, and is also written into the generated NAPI crate's dependency on your target crate.
 
 `defaultFeatures` controls whether `--no-default-features` is passed when building the target crate, and is also written into the generated NAPI crate's dependency on your target crate.
+
+If `targets` is omitted, `generate napi build` builds for the current host target only. Supported targets are:
+
+- `aarch64-apple-darwin`
+- `x86_64-unknown-linux-gnu`
+
+For example:
+
+```yaml
+napi:
+    targets:
+        - x86_64-unknown-linux-gnu
+        - aarch64-apple-darwin
+```
+
+The CLI flag `generate napi build --targets ...` overrides this config value.
 
 ## `turboModule`
 

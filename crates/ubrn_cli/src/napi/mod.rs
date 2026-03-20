@@ -7,5 +7,5 @@ mod build;
 mod config;
 mod generate;
 
-pub(crate) use config::NapiConfig;
+pub(crate) use config::{NapiConfig, Target};
 pub(crate) use generate::CmdArg;

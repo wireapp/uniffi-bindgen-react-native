@@ -292,7 +292,7 @@ This command is to generate code for:
   1.
 - `napi`:
   1. bindings: Typescript and Rust bindings for the N-API flavor.
-  2. build: builds a generated NAPI crate and stages `napi-bindings/index.node`.
+  2. build: builds a generated NAPI crate and stages `napi-bindings/index.js` plus target-specific `.node` files.
 
 Some subcommands require a [configuration file][config].
 
@@ -482,7 +482,9 @@ Options:
 
 ## `generate napi build`
 
-Generate the NAPI bindings, compile the generated NAPI crate, and stage `napi-bindings/index.node`.
+Generate the NAPI bindings, compile the generated NAPI crate, and stage `napi-bindings/index.js` plus one `.node` file per configured target.
+
+`--targets` overrides `napi.targets` from the config file.
 
 ```sh
 Usage: uniffi-bindgen-react-native generate napi build [OPTIONS] --crate <CRATE_DIR> --ts-dir <TS_DIR> --abi-dir <ABI_DIR>
@@ -494,9 +496,10 @@ Options:
       --toml <TOML>        Optional uniffi.toml location
       --config <CONFIG>    Optional ubrn.config.yaml location
       --no-format          By default, bindgen will attempt to format generated code
+  -t, --targets <TARGETS>...  Comma separated list of targets overriding `napi.targets`
   -r, --release            Build a release build
   -p, --profile <PROFILE>  Use a specific build profile
-      --no-cargo           If the Rust library has already been built, then don't re-run cargo build
+      --skip-build         Assume the host Rust library has already been built and do not re-run cargo build
   -h, --help               Print help
 ```
 

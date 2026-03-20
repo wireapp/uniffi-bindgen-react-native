@@ -3,15 +3,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/
  */
-use std::{fs, process::Command};
+use std::process::Command;
 
 use anyhow::{ensure, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::Args;
 use ubrn_bindgen::{AbiFlavor, BindingsArgs, OutputArgs, SourceArgs, SwitchArgs};
-use ubrn_common::{mk_dir, run_cmd_quietly, write_file, CrateMetadata};
+use ubrn_common::{
+    cp_file, mk_dir, path_or_shim, run_cmd_quietly, so_extension, write_file, CrateMetadata,
+    Utf8PathBufExt as _,
+};
 
-use super::NapiConfig;
+use super::{NapiConfig, Target};
 use crate::{config::ProjectConfig, workspace};
 
 #[derive(Args, Debug)]
@@ -52,19 +55,28 @@ pub(crate) struct BuildArgs {
     #[clap(long, short)]
     profile: Option<String>,
 
-    /// If the Rust library has already been built, then don't re-run cargo build.
-    #[clap(long)]
-    no_cargo: bool,
+    /// Comma separated list of targets, that override the values in the
+    /// `ubrn.config.yaml` file.
+    ///
+    /// Supported targets:
+    ///   aarch64-apple-darwin,x86_64-unknown-linux-gnu
+    #[clap(short, long, value_parser, num_args = 1.., value_delimiter = ',')]
+    targets: Vec<Target>,
+
+    /// Assume the host Rust library has already been built and skip re-running cargo build.
+    #[clap(long = "skip-build", alias = "no-cargo")]
+    skip_build: bool,
 }
 
 impl BuildArgs {
     pub(crate) fn run(&self) -> Result<()> {
         let napi_config = self.napi_config()?;
+        let targets = self.targets(&napi_config)?;
         let profile = CrateMetadata::profile(self.profile.as_deref(), self.release);
         let crate_ = CrateMetadata::try_from(self.crate_dir.clone())
             .with_context(|| format!("Failed to read crate metadata from {}", self.crate_dir))?;
 
-        if !self.no_cargo {
+        if !self.skip_build {
             self.build_target_crate(&crate_, profile, &napi_config)?;
         }
 
@@ -83,6 +95,14 @@ impl BuildArgs {
                 generated_crate
             )
         })?;
+        let generated_crate = generated_crate
+            .canonicalize_utf8_or_shim()
+            .with_context(|| {
+                format!(
+                    "Failed to canonicalize generated NAPI crate directory {}",
+                    self.abi_dir
+                )
+            })?;
         let src_dir = generated_crate.join("src");
         mk_dir(&src_dir)
             .with_context(|| format!("Failed to create generated source dir {}", src_dir))?;
@@ -106,15 +126,37 @@ impl BuildArgs {
         let cargo_toml = self
             .render_cargo_toml(&generated_crate, &crate_, &napi_config)
             .context("Failed to write generated NAPI Cargo.toml")?;
-        self.compile_generated_crate(&cargo_toml, profile)
-            .context("Failed to compile generated NAPI crate")?;
-        self.stage_node_addon(&cargo_toml, &self.ts_dir, profile)
-            .context("Failed to stage compiled NAPI addon for Node.js")?;
+        for target in &targets {
+            self.compile_generated_crate(&cargo_toml, profile, target)
+                .with_context(|| {
+                    format!("Failed to compile generated NAPI crate for {}", target)
+                })?;
+            self.stage_node_addon(
+                &cargo_toml,
+                crate_.package_name(),
+                &self.ts_dir,
+                profile,
+                target,
+            )
+            .with_context(|| {
+                format!("Failed to stage compiled NAPI addon for target {}", target)
+            })?;
+        }
+        self.write_loader(&self.ts_dir, &targets)
+            .context("Failed to write NAPI runtime loader")?;
         Ok(())
     }
 
     fn uniffi_toml(&self) -> Option<Utf8PathBuf> {
         self.toml.clone().filter(|toml| toml.exists())
+    }
+
+    fn targets(&self, config: &NapiConfig) -> Result<Vec<Target>> {
+        if self.targets.is_empty() {
+            config.targets()
+        } else {
+            Ok(self.targets.clone())
+        }
     }
 
     fn napi_config(&self) -> Result<NapiConfig> {
@@ -185,10 +227,16 @@ impl BuildArgs {
         Ok(cargo_toml)
     }
 
-    fn compile_generated_crate(&self, cargo_toml: &Utf8Path, profile: &str) -> Result<()> {
+    fn compile_generated_crate(
+        &self,
+        cargo_toml: &Utf8Path,
+        profile: &str,
+        target: &Target,
+    ) -> Result<()> {
         let mut cmd = Command::new("cargo");
         cmd.arg("build")
-            .args(["--manifest-path", cargo_toml.as_str()]);
+            .args(["--manifest-path", cargo_toml.as_str()])
+            .args(["--target", target.triple()]);
         if profile != "debug" {
             cmd.args(["--profile", profile]);
         }
@@ -204,12 +252,14 @@ impl BuildArgs {
     fn stage_node_addon(
         &self,
         cargo_toml: &Utf8Path,
+        package_name: &str,
         ts_dir: &Utf8Path,
         profile: &str,
+        target: &Target,
     ) -> Result<()> {
-        let metadata = CrateMetadata::try_from(cargo_toml.to_path_buf())
-            .with_context(|| format!("Failed to load crate metadata from {}", cargo_toml))?;
-        let native_library = metadata.library_path(None, profile, None);
+        let native_library =
+            Self::generated_library_path(cargo_toml, package_name, profile, target);
+        let native_library = path_or_shim(&native_library)?;
         ensure!(
             native_library.exists(),
             "Expected compiled native library at {}, but it does not exist",
@@ -220,44 +270,102 @@ impl BuildArgs {
         mk_dir(&out_dir)
             .with_context(|| format!("Failed to create NAPI output directory {}", out_dir))?;
 
-        let addon_path = out_dir.join("index.node");
-        fs::copy(native_library.as_std_path(), addon_path.as_std_path()).with_context(|| {
+        let addon_path = out_dir.join(target.addon_filename());
+        cp_file(&native_library, &addon_path).with_context(|| {
             format!(
                 "Failed to copy native addon from {} to {}",
                 native_library, addon_path
             )
         })?;
-        Self::codesign_addon_if_needed(&addon_path)
+        Self::codesign_addon_if_needed(&addon_path, target)
             .with_context(|| format!("Failed to codesign staged addon at {}", addon_path))?;
+        Ok(())
+    }
 
-        let loader = r#"// @ts-nocheck
-import { createRequire } from "node:module";
+    fn write_loader(&self, ts_dir: &Utf8Path, targets: &[Target]) -> Result<()> {
+        let out_dir = ts_dir.join("napi-bindings");
+        mk_dir(&out_dir)
+            .with_context(|| format!("Failed to create NAPI output directory {}", out_dir))?;
+
+        let target_entries = targets
+            .iter()
+            .map(|target| {
+                format!(
+                    "  \"{}\": \"./{}\"",
+                    target.loader_key(),
+                    target.addon_filename()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",\n");
+        let loader = format!(
+            r#"// @ts-nocheck
+import {{ createRequire }} from "node:module";
 const require = createRequire(import.meta.url);
-const native = require("./index.node");
+const bindings = {{
+{target_entries}
+}};
+const target = `${{process.platform}}-${{process.arch}}`;
+const addon = bindings[target];
+if (!addon) {{
+  throw new Error(
+    `Unsupported N-API target '${{target}}'. Available targets: ${{Object.keys(bindings).join(", ")}}`,
+  );
+}}
+const native = require(addon);
 export default native;
-"#;
+"#,
+        );
         let loader_path = out_dir.join("index.js");
         write_file(loader_path.clone(), loader)
             .with_context(|| format!("Failed to write NAPI loader {}", loader_path))?;
         Ok(())
     }
 
-    fn codesign_addon_if_needed(addon_path: &Utf8Path) -> Result<()> {
+    fn generated_library_path(
+        cargo_toml: &Utf8Path,
+        package_name: &str,
+        profile: &str,
+        target: &Target,
+    ) -> Utf8PathBuf {
+        let target_dir = std::env::var("CARGO_TARGET_DIR")
+            .map(Utf8PathBuf::from)
+            .unwrap_or_else(|_| {
+                cargo_toml
+                    .parent()
+                    .expect("Generated crate Cargo.toml has a parent directory")
+                    .join("target")
+            });
+        let library_name = format!(
+            "lib{}_napi.{}",
+            package_name.replace('-', "_"),
+            so_extension(Some(target.triple()), None)
+        );
+        target_dir
+            .join(target.triple())
+            .join(profile)
+            .join(library_name)
+    }
+
+    fn codesign_addon_if_needed(addon_path: &Utf8Path, target: &Target) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
-            let mut cmd = Command::new("codesign");
-            cmd.args(["-s", "-", "-f", addon_path.as_str()]);
-            run_cmd_quietly(&mut cmd).with_context(|| {
-                format!(
-                    "Failed running codesign for generated NAPI addon {}",
-                    addon_path
-                )
-            })?;
+            if target.is_darwin() {
+                let mut cmd = Command::new("codesign");
+                cmd.args(["-s", "-", "-f", addon_path.as_str()]);
+                run_cmd_quietly(&mut cmd).with_context(|| {
+                    format!(
+                        "Failed running codesign for generated NAPI addon {}",
+                        addon_path
+                    )
+                })?;
+            }
         }
 
         #[cfg(not(target_os = "macos"))]
         {
             let _ = addon_path;
+            let _ = target;
         }
         Ok(())
     }
