@@ -76,6 +76,10 @@ const uniffiIsDebug =
 // Public interface members begin here.
 {{ type_helper_code }}
 
+{%- if flavor.is_napi() %}
+uniffiEnsureInitialized();
+{%- endif %}
+
 export default Object.freeze({
   initialize: uniffiEnsureInitialized,
   {%- if !self.exported_converters.is_empty() %}

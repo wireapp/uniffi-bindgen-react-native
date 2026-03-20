@@ -305,7 +305,9 @@ napi:
         ]);
 
         assert_files(&[
-            File::new("src/generated/arithmetic.ts"),
+            File::new("src/generated/arithmetic.ts")
+                .contains("let uniffiInitialized = false;")
+                .contains("uniffiEnsureInitialized();"),
             File::new("native/generated/Cargo.toml")
                 .contains("name = \"uniffi-napi-bindings\"")
                 .contains("name = \"uniffi_example_arithmetic_napi\"")
@@ -360,7 +362,9 @@ fn test_happy_path_napi_skip_build() -> Result<()> {
         ]);
 
         assert_files(&[
-            File::new("src/generated/arithmetic.ts"),
+            File::new("src/generated/arithmetic.ts")
+                .contains("let uniffiInitialized = false;")
+                .contains("uniffiEnsureInitialized();"),
             File::new("src/generated/napi-bindings/index.js")
                 .contains("\"linux-x64\": \"./linux-x64.node\"")
                 .contains("Unsupported N-API target"),

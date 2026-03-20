@@ -8,7 +8,13 @@
  *
  * It also initializes the machinery to enable Rust to talk back to Javascript.
  */
+let uniffiInitialized = false;
+
 function uniffiEnsureInitialized() {
+    if (uniffiInitialized) {
+        return;
+    }
+
     {{- self.import_infra("UniffiInternalError", "errors") }}
     // Get the bindings contract version from our ComponentInterface
     const bindingsContractVersion = {{ ci.uniffi_contract_version() }};
@@ -27,4 +33,6 @@ function uniffiEnsureInitialized() {
     {% for func in self.initialization_fns() -%}
     {{ func }}();
     {% endfor -%}
+
+    uniffiInitialized = true;
 }
