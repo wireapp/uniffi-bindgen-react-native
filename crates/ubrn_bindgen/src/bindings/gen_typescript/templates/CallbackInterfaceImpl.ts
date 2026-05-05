@@ -21,16 +21,24 @@ const {{ trait_impl }}: { vtable: any; register: () => void; } = {
             ()
             {%- endif %}
             : {% call cb::return_type(meth) %} => {
-                const jsCallback = {{ ffi_converter_name }}.lift(uniffiHandle);
-                return {% if meth.is_async() %}await {% endif %}jsCallback.{{ meth.name }}(
+                const jsCallback = {{ ffi_converter_name }}.lift(
+                    uniffiHandle
+                );
+                {%- if meth.is_async() %}
+                return await jsCallback.{{ meth.name }}(
                     {%- for arg in meth.arguments %}
                     {{ arg.ffi_converter }}.lift({{ arg.name }}){% if !loop.last %}, {% endif %}
                     {%- endfor %}
-                    {%- if meth.is_async() -%}
-                    {%-   if !meth.arguments.is_empty() %}, {% endif -%}
+                    {%- if !meth.arguments.is_empty() %}, {% endif -%}
                     { signal }
-                    {%- endif %}
+                );
+                {%- else %}
+                return jsCallback.{{ meth.name }}(
+                    {%- for arg in meth.arguments %}
+                    {{ arg.ffi_converter }}.lift({{ arg.name }}){% if !loop.last %}, {% endif %}
+                    {%- endfor %}
                 )
+                {%- endif %}
             };
             {%- if !meth.is_async() %}
             {#- // Synchronous callback method #}

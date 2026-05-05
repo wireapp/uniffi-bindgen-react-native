@@ -10,6 +10,14 @@
  * It also initializes the machinery to enable Rust to talk back to Javascript.
  */
 function uniffiEnsureInitialized() {
+    if (uniffiInitialized) {
+        return;
+    }
+    if (uniffiInitializing) {
+        return;
+    }
+    uniffiInitializing = true;
+    try {
     // Get the bindings contract version from our ComponentInterface
     const bindingsContractVersion = {{ init.bindings_contract_version }};
     // Get the scaffolding contract version by calling the into the dylib
@@ -27,5 +35,9 @@ function uniffiEnsureInitialized() {
     {% for func in init.initialization_fns -%}
     {{ func }}();
     {% endfor -%}
+        uniffiInitialized = true;
+    } finally {
+        uniffiInitializing = false;
+    }
 }
 {%- endmacro %}

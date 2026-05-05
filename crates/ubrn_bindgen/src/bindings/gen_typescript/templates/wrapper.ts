@@ -19,7 +19,7 @@
 {%- endif %}
 
 {%- if module.flavor.supports_globalthis_native_module() || module.flavor.supports_player() %}
-import nativeModule from "./{{ module.module_name }}-ffi";
+import nativeModuleRaw from "./{{ module.module_name }}-ffi";
 {%- else %}
 import * as wasmBundle from "./wasm-bindgen/index.js";
 {%- endif %}
@@ -35,7 +35,15 @@ import {{ conv.default_name }} from "{{ conv.path }}";
 const { {{ conv.converters|join(", ") }} } = {{ conv.default_name }}.converters;
 {%- endfor %}
 
+let uniffiInitializing = false;
+let uniffiInitialized = false;
 {%- if module.flavor.supports_plain_call_status() %}
+const nativeModule = () => {
+  if (!uniffiInitialized && !uniffiInitializing) {
+    uniffiEnsureInitialized();
+  }
+  return nativeModuleRaw();
+};
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 {%- else %}
 const nativeModule = () => wasmBundle;
