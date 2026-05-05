@@ -7,7 +7,10 @@
 // @ts-nocheck
 {%- endif %}
 
-import lib from "@uniffi-runtime/napi/lib.js";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const lib = require("uniffi-bindgen-react-native/runtimes/napi/lib.js");
 const { UniffiNativeModule, FfiType } = lib;
 
 import {

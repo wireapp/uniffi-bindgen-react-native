@@ -14,14 +14,28 @@
   "type": "module",
   "main": "./typescript/dist/index.js",
   "types": "./typescript/dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./typescript/dist/index.d.ts",
+      "import": "./typescript/dist/index.js",
+      "default": "./typescript/dist/index.js"
+    },
+    "./package.json": "./package.json",
+    "./runtimes/napi": "./runtimes/napi/lib.js",
+    "./runtimes/napi/*": "./runtimes/napi/*"
+  },
   "bin": {
     "ubrn": "./bin/cli.cjs",
     "uniffi-bindgen-react-native": "./bin/cli.cjs"
   },
   "scripts": {
     "build": "tsc",
-    "prepare": "yarn build",
+    "build:napi-runtime": "cd runtimes/napi && napi build --platform --release --js-package-name @uniffi-runtime/napi",
+    "prepare": "npm run build && npm run build:napi-runtime",
     "test": "cargo test"
+  },
+  "dependencies": {
+    "@napi-rs/cli": "^2.18.0"
   },
   "devDependencies": {
     "abortcontroller-polyfill": "^1.7.5",
