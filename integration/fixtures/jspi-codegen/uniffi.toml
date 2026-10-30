@@ -1,0 +1,5 @@
+[bindings.typescript]
+jspi = ["asyncBytes", "asyncVoid", "compute", "bytes", "text", "record", "completeVoid", "plainScalar", "plainVoid", "Processor", "Processor.asyncWork", "MixedClient.refresh", "mixed_client.open", "MixedClient.refresh", "SelectedConstructor.constructor", "Payload", "Payload.asyncCopy", "Mode.delayed", "Choice.delayed"]
+forceAsync = ["compute"]
+strictTypeChecking = true
+strictByteArrays = true
