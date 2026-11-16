@@ -2064,6 +2064,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "uniffi-fixture-async-delivery-exclude"
+version = "0.1.0"
+dependencies = [
+ "thiserror 1.0.69",
+ "ubrn_fixture_testing",
+ "ubrn_macros",
+ "uniffi",
+ "uniffi-runtime-wasm",
+ "uniffi_core",
+]
+
+[[package]]
 name = "uniffi-fixture-async-traits"
 version = "0.21.0"
 dependencies = [

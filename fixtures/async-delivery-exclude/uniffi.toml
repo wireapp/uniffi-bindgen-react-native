@@ -1,0 +1,4 @@
+[bindings.typescript]
+strictTypeChecking = true
+# Names match across case conventions, as in forceAsync.
+asyncDelivery = { exclude = ["version", "versionInfo", "suiteFromU16", "echoBytes", "read_global"] }

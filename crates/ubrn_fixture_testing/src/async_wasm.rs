@@ -45,6 +45,9 @@ const DEFINITIONS_MODULE: &str = "uniffi-definitions.async-wasm";
 ///
 /// The Worker is unref'd once initialised: the sender refs its port while a
 /// call is outstanding, so a finished script exits.
+///
+/// The main thread also opens its own instance of the module, for the
+/// functions `asyncDelivery` excludes: they call it synchronously.
 fn write_node_bootstrap(ts_dir: &Utf8Path, lib_stem: &str) -> Utf8PathBuf {
     let namespaces = crate::wasm2::generated_namespaces(ts_dir);
     write_definitions(ts_dir, &namespaces);
@@ -54,11 +57,13 @@ fn write_node_bootstrap(ts_dir: &Utf8Path, lib_stem: &str) -> Utf8PathBuf {
     let mut src = format!(
         "import {{ isMainThread, MessageChannel, Worker }} from \"node:worker_threads\";\n\
          import {{ createSender }} from \"@ubjs/worker\";\n\
-         import {{ DEFINITIONS }} from \"./{DEFINITIONS_MODULE}.js\";\n"
+         import {{ DEFINITIONS }} from \"./{DEFINITIONS_MODULE}.js\";\n\
+         {}",
+        open_wasm_source(ts_dir, lib_stem, "local")
     );
     for ns in &namespaces {
         src.push_str(&format!(
-            "import {{ setNativeModule as set_{ns} }} from \"./{ns}-ffi.js\";\n\
+            "import {{ setNativeModule as set_{ns}, setSyncNativeModule as set_sync_{ns} }} from \"./{ns}-ffi.js\";\n\
              import * as mod_{ns} from \"./{ns}.js\";\n"
         ));
     }
@@ -86,9 +91,11 @@ fn write_node_bootstrap(ts_dir: &Utf8Path, lib_stem: &str) -> Utf8PathBuf {
          }});\n\
          const sender = createSender(DEFINITIONS, ch.port2);\n"
     ));
+    src.push_str("const localPlayer = local.registerSync(DEFINITIONS);\n");
     for ns in &namespaces {
         src.push_str(&format!(
             "set_{ns}(sender);\n\
+             set_sync_{ns}(localPlayer);\n\
              await mod_{ns}.default.initialize();\n"
         ));
     }
@@ -168,24 +175,30 @@ fn write_worker_bootstrap(ts_dir: &Utf8Path) {
 /// handed. Mirrors the init sequence in the generated index template
 /// (`gen_typescript/templates/index.ts`): openWasm, resolveModule, registerSync.
 fn write_worker(ts_dir: &Utf8Path, lib_stem: &str) {
-    let glue = ts_dir.join(format!("{lib_stem}_bg.js")).exists();
     let mut src = format!(
         "import {{ workerData }} from \"node:worker_threads\";\n\
-         import {{ openWasm }} from \"@ubjs/wasm\";\n\
          import {{ createReceiver }} from \"@ubjs/worker\";\n\
          import {{ DEFINITIONS }} from \"./{DEFINITIONS_MODULE}.js\";\n"
     );
+    src.push_str(&open_wasm_source(ts_dir, lib_stem, "wasm"));
+    src.push_str("createReceiver(DEFINITIONS, wasm.registerSync(DEFINITIONS), workerData.port);\n");
+    write_generated(ts_dir, WORKER_FILE, src);
+}
+
+/// Imports for, and a top-level await of, opening the module into `binding`.
+fn open_wasm_source(ts_dir: &Utf8Path, lib_stem: &str, binding: &str) -> String {
+    let glue = ts_dir.join(format!("{lib_stem}_bg.js")).exists();
+    let mut src = String::from("import { openWasm } from \"@ubjs/wasm\";\n");
     if glue {
         src.push_str(&format!("import * as glue from \"./{lib_stem}_bg.js\";\n"));
     }
     src.push_str(&format!(
-        "const wasm = await openWasm(new URL(\"./{lib_stem}.wasm\", import.meta.url){});\n\
-         createReceiver(DEFINITIONS, wasm.registerSync(DEFINITIONS), workerData.port);\n",
+        "const {binding} = await openWasm(new URL(\"./{lib_stem}.wasm\", import.meta.url){});\n",
         if glue {
             format!(", {{ resolveModule: async (n) => n.endsWith(\"{lib_stem}_bg.js\") ? glue : undefined }}")
         } else {
             String::new()
         }
     ));
-    write_generated(ts_dir, WORKER_FILE, src);
+    src
 }
