@@ -106,9 +106,9 @@ The [`force-async`](https://github.com/jhugman/uniffi-bindgen-react-native/tree/
 asyncDelivery = true
 ```
 
-It implies `forceAsync = true`: every function, method and constructor returns a `Promise`, and `initialize()` does too. A `forceAsync` list alongside it is an error. `wasm2` is the only flavor that accepts it today; `jsi`, `jsi2`, `wasm` and `napi` reject it.
+It implies `forceAsync = true`: every function, method and constructor returns a `Promise`, and `initialize()` does too. A `forceAsync` list alongside it is an error. `wasm2` is the only flavor that supports it today. `jsi`, `jsi2`, `wasm` and `napi` ignore it, so one `uniffi.toml` can serve them all.
 
-`--async` on `ubrn generate wasm2 bindings` turns the same setting on. To generate sync and async bindings from one `uniffi.toml`, leave `asyncDelivery` out of the file and pass `--async` for the async build; the flag cannot turn off an `asyncDelivery = true` in the file.
+`--async` on `ubrn generate wasm2 bindings` turns the same setting on. Unlike the file, the flag is an error on a flavor that doesn't support it. To generate sync and async bindings from one `uniffi.toml`, leave `asyncDelivery` out of the file and pass `--async` for the async build; the flag cannot turn off an `asyncDelivery = true` in the file.
 
 ```admonish info
 Two things stay synchronous on the calling side: allocating a buffer for arguments (the sender owns it) and cloning an object handle for an argument. uniffi's clone returns the handle it was given, and a message port delivers in order, so the clone is posted and the handle used at once.
@@ -127,6 +127,31 @@ await bindings.default.initialize();
 ```
 
 A library with several namespaces shares one channel and one merged table: a clone must land before the call that consumes it, and message ports only keep order within a port.
+
+#### Excluding functions
+
+Some top-level functions only compute a value from their arguments, such as a version string or a conversion. Give `asyncDelivery` a table to keep those synchronous:
+
+```toml
+[bindings.typescript]
+asyncDelivery = { exclude = ["version", "suiteFromU16"] }
+```
+
+The table turns async delivery on, as `true` does. Names are matched as in `forceAsync`, but only top-level functions can be excluded.
+
+An excluded function can't use the player behind the port, so it calls a second player on the calling thread: another instance of the same module, opened there. Pass it to `setSyncNativeModule` from the generated `-ffi` module:
+
+```ts
+// On the page, beside the sender
+const local = await openWasm(source);
+setSyncNativeModule(local.registerSync(PLAYER_DEFINITIONS));
+```
+
+`uniffiInitAsync` does this itself, with the one player it opens.
+
+The two instances share no memory. An object, or the handle behind a callback, only exists in the instance that made it. So generation fails when an excluded function takes, returns or throws an object or a callback interface, directly or inside a record, an enum or a collection. Global state isn't shared either: a static that the worker's instance changes keeps its old value on the page.
+
+The [`async-delivery-exclude`](https://github.com/jhugman/uniffi-bindgen-react-native/tree/main/fixtures/async-delivery-exclude) fixture exercises it.
 
 ### Logging the FFI
 
