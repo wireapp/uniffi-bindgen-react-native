@@ -36,9 +36,10 @@ pub(crate) struct TsConfig {
     #[serde(default)]
     pub(crate) force_async: ForceAsync,
     /// Generate call bodies that `await` the player. For a player behind a
-    /// message port. Implies `forceAsync = true`.
+    /// message port. Implies `forceAsync = true`, except for the top-level
+    /// functions it excludes.
     #[serde(default)]
-    pub(crate) async_delivery: bool,
+    pub(crate) async_delivery: AsyncDelivery,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -71,17 +72,23 @@ impl TsConfig {
     /// and `asyncDelivery` needs a flavor that awaits its player at load, and
     /// forces every surface async.
     pub(crate) fn apply_switches(&mut self, switches: &SwitchArgs) -> anyhow::Result<()> {
-        if switches.async_delivery {
-            self.async_delivery = true;
+        if switches.async_delivery && !self.async_delivery.is_enabled() {
+            self.async_delivery = AsyncDelivery::Enabled(true);
         }
-        if !self.async_delivery {
+        if !self.async_delivery.is_enabled() {
             return Ok(());
         }
         if !switches.flavor.supports_async_delivery() {
-            anyhow::bail!(
-                "asyncDelivery needs a flavor that awaits a player at load; `{}` does not",
-                switches.flavor.as_str()
-            );
+            if switches.async_delivery {
+                anyhow::bail!(
+                    "asyncDelivery needs a flavor that awaits a player at load; `{}` does not",
+                    switches.flavor.as_str()
+                );
+            }
+            // One uniffi.toml serves every flavor a crate is built for, so a
+            // flavor that can't await its player ignores the setting.
+            self.async_delivery = AsyncDelivery::Enabled(false);
+            return Ok(());
         }
         match &self.force_async {
             ForceAsync::Named(_) => anyhow::bail!(
@@ -123,6 +130,59 @@ impl ForceAsync {
                 names.iter().any(|n| n.to_upper_camel_case() == target)
             }
         }
+    }
+}
+
+/// `asyncDelivery` config value: a bool, or a table that turns it on with
+/// exceptions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum AsyncDelivery {
+    /// `asyncDelivery = true | false`
+    Enabled(bool),
+    /// `asyncDelivery = { exclude = ["version"] }`
+    Options(AsyncDeliveryOptions),
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub(crate) struct AsyncDeliveryOptions {
+    /// Top-level functions that keep a synchronous surface. They call a
+    /// second, synchronous player on the calling thread, so they can't take
+    /// or return objects or callbacks, which live with the other player.
+    #[serde(default)]
+    pub(crate) exclude: Vec<String>,
+}
+
+impl Default for AsyncDelivery {
+    fn default() -> Self {
+        Self::Enabled(false)
+    }
+}
+
+impl AsyncDelivery {
+    pub(crate) fn is_enabled(&self) -> bool {
+        match self {
+            Self::Enabled(enabled) => *enabled,
+            Self::Options(_) => true,
+        }
+    }
+
+    /// The names the config excludes, as written.
+    pub(crate) fn excluded(&self) -> &[String] {
+        match self {
+            Self::Enabled(_) => &[],
+            Self::Options(options) => &options.exclude,
+        }
+    }
+
+    /// Whether the top-level function named `name` is excluded from async
+    /// delivery. Matches names as [`ForceAsync::is_forced`] does.
+    pub(crate) fn is_excluded(&self, name: &str) -> bool {
+        let target = name.to_upper_camel_case();
+        self.excluded()
+            .iter()
+            .any(|n| n.to_upper_camel_case() == target)
     }
 }
 
@@ -203,9 +263,52 @@ mod config_tests {
     #[test]
     fn async_delivery_deserializes() {
         let cfg: TsConfig = toml::from_str("asyncDelivery = true").unwrap();
-        assert!(cfg.async_delivery);
+        assert!(cfg.async_delivery.is_enabled());
         let cfg: TsConfig = toml::from_str("").unwrap();
-        assert!(!cfg.async_delivery);
+        assert!(!cfg.async_delivery.is_enabled());
+    }
+
+    #[test]
+    fn async_delivery_table_turns_delivery_on_with_exclusions() {
+        let cfg: TsConfig =
+            toml::from_str("asyncDelivery = { exclude = [\"buildMetadata\", \"version\"] }")
+                .unwrap();
+        assert!(cfg.async_delivery.is_enabled());
+        assert!(cfg.async_delivery.is_excluded("build_metadata"));
+        assert!(cfg.async_delivery.is_excluded("version"));
+        assert!(!cfg.async_delivery.is_excluded("open_database"));
+    }
+
+    #[test]
+    fn async_delivery_table_without_exclude_excludes_nothing() {
+        let cfg: TsConfig = toml::from_str("asyncDelivery = {}").unwrap();
+        assert!(cfg.async_delivery.is_enabled());
+        assert!(!cfg.async_delivery.is_excluded("version"));
+    }
+
+    #[test]
+    fn async_delivery_table_rejects_unknown_keys() {
+        assert!(toml::from_str::<TsConfig>("asyncDelivery = { include = [\"version\"] }").is_err());
+    }
+
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn cli_async_keeps_the_configured_exclusions() {
+        let mut cfg: TsConfig =
+            toml::from_str("asyncDelivery = { exclude = [\"version\"] }").unwrap();
+        cfg.apply_switches(&switches(AbiFlavor::Wasm2, true))
+            .unwrap();
+        assert!(cfg.async_delivery.is_excluded("version"));
+    }
+
+    #[test]
+    fn async_delivery_exclusions_are_ignored_without_a_player_flavor() {
+        let mut cfg: TsConfig =
+            toml::from_str("asyncDelivery = { exclude = [\"version\"] }").unwrap();
+        cfg.apply_switches(&switches(AbiFlavor::Jsi, false))
+            .unwrap();
+        assert!(!cfg.async_delivery.is_enabled());
+        assert!(!cfg.async_delivery.is_excluded("version"));
     }
 
     #[cfg(feature = "wasm")]
@@ -214,7 +317,7 @@ mod config_tests {
         let mut cfg: TsConfig = toml::from_str("asyncDelivery = true").unwrap();
         cfg.apply_switches(&switches(AbiFlavor::Wasm2, false))
             .unwrap();
-        assert!(cfg.async_delivery);
+        assert!(cfg.async_delivery.is_enabled());
         assert!(cfg.force_async.is_forced("Anything"));
     }
 
@@ -224,7 +327,7 @@ mod config_tests {
         let mut cfg: TsConfig = toml::from_str("").unwrap();
         cfg.apply_switches(&switches(AbiFlavor::Wasm2, true))
             .unwrap();
-        assert!(cfg.async_delivery);
+        assert!(cfg.async_delivery.is_enabled());
         assert!(cfg.force_async.is_forced("Anything"));
     }
 
@@ -241,35 +344,32 @@ mod config_tests {
     }
 
     #[test]
-    fn async_delivery_rejects_a_flavor_without_a_player() {
+    fn async_delivery_is_ignored_on_a_flavor_without_a_player() {
         let mut cfg: TsConfig = toml::from_str("asyncDelivery = true").unwrap();
-        let err = cfg
-            .apply_switches(&switches(AbiFlavor::Jsi, false))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("jsi"), "{err}");
+        cfg.apply_switches(&switches(AbiFlavor::Jsi, false))
+            .unwrap();
+        assert!(!cfg.async_delivery.is_enabled());
+        assert!(!cfg.force_async.is_forced("Anything"));
     }
 
     #[test]
-    fn async_delivery_rejects_napi_despite_its_player() {
+    fn async_delivery_is_ignored_on_napi_despite_its_player() {
         // Napi's index initializes at module load, where nothing can await.
         let mut cfg: TsConfig = toml::from_str("asyncDelivery = true").unwrap();
-        let err = cfg
-            .apply_switches(&switches(AbiFlavor::Napi, false))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("napi"), "{err}");
+        cfg.apply_switches(&switches(AbiFlavor::Napi, false))
+            .unwrap();
+        assert!(!cfg.async_delivery.is_enabled());
+        assert!(!cfg.force_async.is_forced("Anything"));
     }
 
     #[test]
-    fn async_delivery_rejects_jsi2_despite_its_player() {
+    fn async_delivery_is_ignored_on_jsi2_despite_its_player() {
         // Jsi2 initializes at module load, and has no TextEncoder to await around.
         let mut cfg: TsConfig = toml::from_str("asyncDelivery = true").unwrap();
-        let err = cfg
-            .apply_switches(&switches(AbiFlavor::Jsi2, false))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("jsi2"), "{err}");
+        cfg.apply_switches(&switches(AbiFlavor::Jsi2, false))
+            .unwrap();
+        assert!(!cfg.async_delivery.is_enabled());
+        assert!(!cfg.force_async.is_forced("Anything"));
     }
 
     #[test]
@@ -287,7 +387,7 @@ mod config_tests {
         let mut cfg: TsConfig = toml::from_str("forceAsync = [\"Widget\"]").unwrap();
         cfg.apply_switches(&switches(AbiFlavor::Jsi, false))
             .unwrap();
-        assert!(!cfg.async_delivery);
+        assert!(!cfg.async_delivery.is_enabled());
         assert!(cfg.force_async.is_forced("Widget"));
         assert!(!cfg.force_async.is_forced("Other"));
     }

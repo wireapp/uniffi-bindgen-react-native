@@ -292,7 +292,7 @@ fn generate_index_from_modules(
     for namespace in general_root.namespaces.values() {
         let config = ts_config_for(namespace, switches)?;
         strict_type_checking &= config.strict_type_checking;
-        async_delivery |= config.async_delivery;
+        async_delivery |= config.async_delivery.is_enabled();
     }
     let code = gen_typescript::generate_index_code(
         modules.to_vec(),
