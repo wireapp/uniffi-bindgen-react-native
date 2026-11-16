@@ -46,6 +46,12 @@ fn wasm2_player_ffi_renders_expected_markers() {
         "expected setNativeModule export in rendered output:\n{rendered}"
     );
 
+    // The functions asyncDelivery excludes call a second, synchronous player.
+    assert!(
+        rendered.contains("export function setSyncNativeModule"),
+        "expected setSyncNativeModule export in rendered output:\n{rendered}"
+    );
+
     // The napi getter path (which calls UniffiNativeModule.open) must not
     // appear in the wasm2 output.
     assert!(

@@ -436,6 +436,28 @@ pub(super) fn build_callable(
     flavor: &AbiFlavor,
     force_async: bool,
 ) -> TsCallable {
+    build_callable_with_player(
+        config,
+        callable,
+        docstring,
+        receiver,
+        flavor,
+        force_async,
+        false,
+    )
+}
+
+/// As [`build_callable`]; `sync_player` builds a top-level function that
+/// `asyncDelivery` excludes, which is neither forced async nor delivered.
+pub(super) fn build_callable_with_player(
+    config: &Config,
+    callable: &general::Callable,
+    docstring: &Option<String>,
+    receiver: Option<TsReceiver>,
+    flavor: &AbiFlavor,
+    force_async: bool,
+    sync_player: bool,
+) -> TsCallable {
     let name = fn_name(&callable.name);
     let arguments: Vec<TsArg> = callable
         .arguments
@@ -475,8 +497,9 @@ pub(super) fn build_callable(
         ffi_name: callable_ffi_name,
         ffi_async,
         receiver,
-        force_async,
-        async_delivery: config.async_delivery,
+        force_async: force_async && !sync_player,
+        async_delivery: config.async_delivery.is_enabled() && !sync_player,
+        sync_player,
         low_level_async_polling: flavor.low_level_async_polling(),
     }
 }
@@ -856,7 +879,16 @@ pub(super) fn build_functions(
         .iter()
         .map(|f| {
             let force_async = config.force_async.is_forced(&f.callable.name);
-            build_callable(config, &f.callable, &f.docstring, None, flavor, force_async)
+            let sync_player = config.async_delivery.is_excluded(&f.callable.name);
+            build_callable_with_player(
+                config,
+                &f.callable,
+                &f.docstring,
+                None,
+                flavor,
+                force_async,
+                sync_player,
+            )
         })
         .collect()
 }

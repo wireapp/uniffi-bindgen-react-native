@@ -32,6 +32,7 @@ import { openWasm, type WasmSource } from '@ubjs/wasm';
 import {
   PLAYER_DEFINITIONS as PLAYER_DEFINITIONS_{{ m.ts() }},
   setNativeModule as setNativeModule_{{ m.ts() }},
+  setSyncNativeModule as setSyncNativeModule_{{ m.ts() }},
 } from './{{ m.ts_ffi() }}';
 {%- endfor %}
 {%- if has_wasm_bindgen_glue %}
@@ -65,7 +66,10 @@ export function uniffiInitAsync(source: WasmSource): Promise<void> {
             : undefined,
       }{% endif %});
       {%- for m in modules %}
-      setNativeModule_{{ m.ts() }}(wasmModule.registerSync(PLAYER_DEFINITIONS_{{ m.ts() }}));
+      const player_{{ m.ts() }} = wasmModule.registerSync(PLAYER_DEFINITIONS_{{ m.ts() }});
+      setNativeModule_{{ m.ts() }}(player_{{ m.ts() }});
+      // Every call is local here, so the excluded functions share the player.
+      setSyncNativeModule_{{ m.ts() }}(player_{{ m.ts() }});
       {% if async_delivery %}await {% endif %}{{ m.ts() }}.default.initialize();
       {%- endfor %}
     })();

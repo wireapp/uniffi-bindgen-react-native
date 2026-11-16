@@ -142,6 +142,9 @@ pub(crate) struct TsCallable {
     pub force_async: bool,
     /// `asyncDelivery`: every call reaches the player over a port.
     pub async_delivery: bool,
+    /// `asyncDelivery` excludes this top-level function: it keeps a
+    /// synchronous surface, and calls the synchronous player on this thread.
+    pub sync_player: bool,
     /// The player runs the future poll loop, so an async call awaits one
     /// entry that resolves to the completed value.
     pub low_level_async_polling: bool,

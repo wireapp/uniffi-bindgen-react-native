@@ -20,6 +20,9 @@
 
 {%- if module.flavor.supports_globalthis_native_module() || module.flavor.supports_player() %}
 import nativeModule from "./{{ module.module_name }}-ffi";
+{%- if module.has_sync_player_functions %}
+import { syncNativeModule } from "./{{ module.module_name }}-ffi";
+{%- endif %}
 {%- else %}
 import * as wasmBundle from "./wasm-bindgen/index.js";
 {%- endif %}

@@ -44,6 +44,9 @@ pub(crate) struct TsApiModule {
     pub supports_rust_backtrace: bool,
     /// Every call reaches the player over a port, so the generated bodies await it.
     pub async_delivery: bool,
+    /// Some top-level function is excluded from async delivery, and calls the
+    /// synchronous player instead.
+    pub has_sync_player_functions: bool,
     pub console_import: Option<String>,
     pub file_imports: Vec<TsFileImport>,
     pub converter_imports: Vec<TsConverterImport>,
@@ -534,7 +537,8 @@ impl TsApiModule {
             is_debug: config.is_debug(),
             is_verbose: config.is_verbose(),
             supports_rust_backtrace,
-            async_delivery: config.async_delivery,
+            async_delivery: config.async_delivery.is_enabled(),
+            has_sync_player_functions: functions.iter().any(|f| f.sync_player),
             console_import: config.console_import.clone(),
             file_imports: Vec::new(),
             converter_imports: Vec::new(),
@@ -600,8 +604,136 @@ impl TsApiModule {
         module.exported_converters = acc.exported_converters;
 
         validate_force_async(&module.type_definitions)?;
+        validate_async_delivery_exclusions(config, namespace)?;
 
         Ok(module)
+    }
+}
+
+/// Check every function `asyncDelivery` excludes.
+///
+/// An excluded function calls a second player on the calling thread. Under
+/// async delivery that is a separate instance of the module: objects, and the
+/// handles behind callbacks, live in the instance behind the port, so an
+/// excluded function can only pass plain values. Only top-level functions can
+/// be excluded, and none that is async in Rust: those already return a promise.
+pub(super) fn validate_async_delivery_exclusions(
+    config: &Config,
+    namespace: &general::Namespace,
+) -> anyhow::Result<()> {
+    let mut errors = Vec::new();
+    for name in config.async_delivery.excluded() {
+        let target = name.to_upper_camel_case();
+        let Some(function) = namespace
+            .functions
+            .iter()
+            .find(|f| f.callable.name.to_upper_camel_case() == target)
+        else {
+            errors.push(format!(
+                "asyncDelivery excludes `{name}`, but `{}` has no top-level function by that name. \
+                 Only top-level functions can be excluded.",
+                namespace.name
+            ));
+            continue;
+        };
+        let callable = &function.callable;
+        if callable.is_async {
+            errors.push(format!(
+                "asyncDelivery excludes `{name}`, but it is async in Rust, so it returns a promise either way."
+            ));
+            continue;
+        }
+        let types = callable
+            .arguments
+            .iter()
+            .map(|arg| &arg.ty.ty)
+            .chain(callable.return_type.ty.iter().map(|node| &node.ty))
+            .chain(callable.throws_type.ty.iter().map(|node| &node.ty));
+        let mut visited = BTreeSet::new();
+        for ty in types {
+            if let Some(reason) = shared_with_the_port(
+                &namespace.name,
+                &namespace.type_definitions,
+                ty,
+                &mut visited,
+            ) {
+                errors.push(format!(
+                    "asyncDelivery excludes `{name}`, but {reason}. An excluded function runs on a \
+                     separate instance of the module, where objects and callbacks from the instance \
+                     behind the port don't exist."
+                ));
+                break;
+            }
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(errors.join("\n"))
+    }
+}
+
+/// Why a value of `ty` can't cross between two instances of the module, if
+/// it can't. Follows records, enums, containers and custom types.
+fn shared_with_the_port(
+    namespace: &str,
+    type_definitions: &[general::TypeDefinition],
+    ty: &general::Type,
+    visited: &mut BTreeSet<String>,
+) -> Option<String> {
+    use general::Type;
+    match ty {
+        Type::Interface { name, .. } => Some(format!("it uses the object `{name}`")),
+        Type::CallbackInterface { name, .. } => {
+            Some(format!("it uses the callback interface `{name}`"))
+        }
+        Type::Optional { inner_type } | Type::Sequence { inner_type } => {
+            shared_with_the_port(namespace, type_definitions, inner_type, visited)
+        }
+        Type::Map {
+            key_type,
+            value_type,
+        } => shared_with_the_port(namespace, type_definitions, key_type, visited)
+            .or_else(|| shared_with_the_port(namespace, type_definitions, value_type, visited)),
+        Type::Custom { builtin, .. } => {
+            shared_with_the_port(namespace, type_definitions, builtin, visited)
+        }
+        Type::Record {
+            namespace: owner,
+            name,
+        }
+        | Type::Enum {
+            namespace: owner,
+            name,
+        } => {
+            if owner != namespace {
+                return Some(format!(
+                    "it uses `{name}` from `{owner}`, whose fields can't be checked from `{namespace}`"
+                ));
+            }
+            if !visited.insert(name.clone()) {
+                return None;
+            }
+            let fields: Vec<&general::Field> = type_definitions
+                .iter()
+                .find_map(|td| match td {
+                    general::TypeDefinition::Record(r) if &r.name == name => {
+                        Some(r.fields.iter().collect())
+                    }
+                    general::TypeDefinition::Enum(e) if &e.name == name => {
+                        Some(e.variants.iter().flat_map(|v| &v.fields).collect())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            fields
+                .into_iter()
+                .find_map(|field| {
+                    shared_with_the_port(namespace, type_definitions, &field.ty.ty, visited)
+                })
+                .map(|reason| format!("{reason}, through `{name}`"))
+        }
+        _ => None,
     }
 }
 
@@ -665,6 +797,75 @@ fn force_async_error_block(kind: &str, name: &str, methods: &[TsCallable]) -> Op
 }
 
 #[cfg(test)]
+mod async_delivery_exclusion_tests {
+    use super::*;
+    use general::{ObjectImpl, Type};
+
+    fn reason(ty: Type) -> Option<String> {
+        shared_with_the_port("ns", &[], &ty, &mut BTreeSet::new())
+    }
+
+    fn object(name: &str) -> Type {
+        Type::Interface {
+            namespace: "ns".into(),
+            name: name.into(),
+            imp: ObjectImpl::Struct,
+        }
+    }
+
+    #[test]
+    fn plain_values_can_cross() {
+        assert_eq!(reason(Type::String), None);
+        assert_eq!(
+            reason(Type::Sequence {
+                inner_type: Box::new(Type::Bytes)
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn objects_and_callbacks_cannot_cross() {
+        assert!(reason(object("Widget")).unwrap().contains("`Widget`"));
+        let callback = Type::CallbackInterface {
+            namespace: "ns".into(),
+            name: "Logger".into(),
+        };
+        assert!(reason(callback).unwrap().contains("`Logger`"));
+    }
+
+    #[test]
+    fn objects_inside_containers_and_custom_types_cannot_cross() {
+        let nested = Type::Optional {
+            inner_type: Box::new(Type::Sequence {
+                inner_type: Box::new(object("Widget")),
+            }),
+        };
+        assert!(reason(nested).unwrap().contains("`Widget`"));
+        let map = Type::Map {
+            key_type: Box::new(Type::String),
+            value_type: Box::new(object("Widget")),
+        };
+        assert!(reason(map).unwrap().contains("`Widget`"));
+        let custom = Type::Custom {
+            namespace: "ns".into(),
+            name: "Handle".into(),
+            builtin: Box::new(object("Widget")),
+        };
+        assert!(reason(custom).unwrap().contains("`Widget`"));
+    }
+
+    #[test]
+    fn records_from_another_crate_cannot_be_checked() {
+        let record = Type::Record {
+            namespace: "other".into(),
+            name: "Remote".into(),
+        };
+        assert!(reason(record).unwrap().contains("`other`"));
+    }
+}
+
+#[cfg(test)]
 mod force_async_validation_tests {
     use super::*;
 
@@ -685,6 +886,7 @@ mod force_async_validation_tests {
             receiver: None,
             force_async: false,
             async_delivery: false,
+            sync_player: false,
             low_level_async_polling: false,
         }
     }

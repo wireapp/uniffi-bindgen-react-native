@@ -110,6 +110,29 @@ export const PLAYER_DEFINITIONS = DEFINITIONS;
 export function setNativeModule(m: Record<string, (...args: any[]) => any>) {
   _nativeModule = m as unknown as NativeModuleInterface;
 }
+
+// The functions `asyncDelivery` excludes call a player on this thread, which
+// answers synchronously. Under async delivery it is a second instance of the
+// module, beside the one behind the port, so it shares none of its objects.
+type SyncNativeModuleInterface = {
+  [K in keyof NativeModuleInterface]: (
+    ...args: Parameters<NativeModuleInterface[K]>
+  ) => Awaited<ReturnType<NativeModuleInterface[K]>>;
+};
+let _syncNativeModule: SyncNativeModuleInterface | undefined;
+export function syncNativeModule(): SyncNativeModuleInterface {
+  if (!_syncNativeModule) {
+    throw new Error(
+      "{{ module.crate_name }}: no synchronous player. Pass " +
+      "`registerSync(PLAYER_DEFINITIONS)` of a module opened on this thread " +
+      "to `setSyncNativeModule` before calling a function that asyncDelivery excludes.",
+    );
+  }
+  return _syncNativeModule;
+}
+export function setSyncNativeModule(m: Record<string, (...args: any[]) => any>) {
+  _syncNativeModule = m as unknown as SyncNativeModuleInterface;
+}
 {%- when PlayerHostSource::NapiPackage %}
 const getter: () => NativeModuleInterface = () => {
   if (!_nativeModule) {

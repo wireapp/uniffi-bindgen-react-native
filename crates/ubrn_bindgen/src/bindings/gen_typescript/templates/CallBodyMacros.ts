@@ -87,11 +87,11 @@ console.debug(`-- {{ ffi_name }}`);
 {%- macro rust_call_open(callable) -%}
     {%- match callable.throws -%}
     {%- when Some with (e) -%}
-        {% if module.async_delivery %}await uniffiCaller.rustCallWithErrorAsync({% else %}uniffiCaller.rustCallWithError({% endif %}
+        {% if callable.async_delivery %}await uniffiCaller.rustCallWithErrorAsync({% else %}uniffiCaller.rustCallWithError({% endif %}
             /*liftError:*/ {{ e.lift_error_fn }},
             /*caller:*/ (callStatus) => {
     {%- else -%}
-        {% if module.async_delivery %}await uniffiCaller.rustCallAsync({% else %}uniffiCaller.rustCall({% endif %}
+        {% if callable.async_delivery %}await uniffiCaller.rustCallAsync({% else %}uniffiCaller.rustCall({% endif %}
             /*caller:*/ (callStatus) => {
     {%- endmatch %}
 {%- endmacro -%}
